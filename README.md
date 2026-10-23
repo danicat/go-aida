@@ -15,7 +15,7 @@ AIDA runs as a **single agent** (`prompts/aida.prompt`) with all tools exposed d
 flowchart LR
     subgraph Cockpit["Web Cockpit (Lit + Three.js + @genkit-ai/a2ui)"]
         UI["A2UI v0.9 Surface Renderer\n(Panel, Scene3D, CyberChart, HudGauge, DataMatrix)"]
-        Avatar["AA2D v3.0 / PC-98\nOperator Avatar"]
+        Avatar["PC-98 Pixel Sprite\nOperator Avatar"]
         HITL["Human-in-the-Loop\nCommand Approval Card"]
     end
 

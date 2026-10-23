@@ -527,7 +527,7 @@ aida-cockpit {
   word-break: break-word;
 }
 
-/* Large 280x280 Animated PC-98 / AA2D Avatar CRT Frame (matches v1 dimensions) */
+/* Large 280x280 Animated PC-98 Avatar CRT Frame (matches v1 dimensions) */
 .avatar-crt-wrapper {
   display: flex;
   flex-direction: column;
@@ -552,12 +552,6 @@ aida-cockpit {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-}
-
-.avatar-crt-frame aa2d-avatar {
-  display: block;
-  width: 280px;
-  height: 280px;
 }
 
 .avatar-crt-frame.error-state {

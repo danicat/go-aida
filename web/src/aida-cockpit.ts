@@ -37,7 +37,6 @@ import {
   type AgentInput,
 } from 'genkit/beta/client';
 import { aidaCatalog } from './aida-catalog/index.js';
-import './aa2d/aa2d-sdk.js';
 import type {
   AvatarState,
   ChatTurn,
@@ -151,10 +150,7 @@ export class AidaCockpit extends LitElement {
   @state() private theme: ThemeMode = 'dark';
   @state() private scanlines: boolean = true;
 
-  @state() private avatarMode: 'aa2d' | 'pc98' = 'pc98';
   @state() private baseAvatarMode: 'idle' | 'think' | 'talk' | 'error' | 'teehee' = 'idle';
-  @state() private aa2dOverrideAction: string = '';
-  @state() private aa2dOverrideEmotion: string = '';
   @state() private lcdOverrideSpeech: string = '';
   @state() private isMouthOpen: boolean = false;
   @state() private isBlinking: boolean = false;
@@ -323,10 +319,7 @@ export class AidaCockpit extends LitElement {
     }
     const delay = 2500 + Math.random() * 3500;
     this.blinkTimeoutId = window.setTimeout(() => {
-      if (
-        this.avatarMode === 'pc98' &&
-        (this.baseAvatarMode === 'idle' || this.baseAvatarMode === 'think')
-      ) {
+      if (this.baseAvatarMode === 'idle' || this.baseAvatarMode === 'think') {
         this.isBlinking = true;
         this.blinkEndTimeoutId = window.setTimeout(() => {
           this.isBlinking = false;
@@ -343,7 +336,6 @@ export class AidaCockpit extends LitElement {
 
     // Exact AIDA v1 talking loop: 150ms interval alternating strictly between 'talk' and 'idle'
     this.talkTimer = window.setInterval(() => {
-      if (this.avatarMode !== 'pc98') return;
       if (this.baseAvatarMode === 'talk') {
         this.isMouthOpen = !this.isMouthOpen;
       } else if (this.isMouthOpen) {
@@ -583,29 +575,12 @@ export class AidaCockpit extends LitElement {
   }
 
   private setAvatar(opts: {
-    renderer?: 'pc98' | 'aa2d' | 'toggle';
     state?: 'idle' | 'think' | 'talk' | 'error' | 'teehee';
-    aa2dAction?: string;
-    aa2dEmotion?: string;
     speech?: string;
     statusText?: string;
   }): void {
-    if (opts.renderer) {
-      this.avatarMode =
-        opts.renderer === 'toggle'
-          ? this.avatarMode === 'pc98'
-            ? 'aa2d'
-            : 'pc98'
-          : opts.renderer;
-    }
     if (opts.state) {
       this.setAvatarMode(opts.state);
-    }
-    if (opts.aa2dAction !== undefined) {
-      this.aa2dOverrideAction = opts.aa2dAction;
-    }
-    if (opts.aa2dEmotion !== undefined) {
-      this.aa2dOverrideEmotion = opts.aa2dEmotion;
     }
     if (opts.speech !== undefined) {
       this.lcdOverrideSpeech = opts.speech;
@@ -614,7 +589,7 @@ export class AidaCockpit extends LitElement {
     if (opts.statusText !== undefined) {
       this.lcdOperationText = opts.statusText;
     }
-    this.addLog('INFO', `Updated AIDA avatar state (${this.avatarMode} / ${this.baseAvatarMode})`);
+    this.addLog('INFO', `Updated AIDA avatar state (${this.baseAvatarMode})`);
   }
 
   private closeTurnTab(e: Event, index: number): void {
@@ -750,10 +725,6 @@ export class AidaCockpit extends LitElement {
       }),
     set_avatar: (ctx) =>
       this.setAvatar({
-        renderer:
-          ctx.renderer === 'pc98' || ctx.renderer === 'aa2d' || ctx.renderer === 'toggle'
-            ? ctx.renderer
-            : undefined,
         state:
           ctx.state === 'idle' ||
           ctx.state === 'think' ||
@@ -762,12 +733,9 @@ export class AidaCockpit extends LitElement {
           ctx.state === 'error'
             ? ctx.state
             : undefined,
-        aa2dAction: typeof ctx.aa2dAction === 'string' ? ctx.aa2dAction : undefined,
-        aa2dEmotion: typeof ctx.aa2dEmotion === 'string' ? ctx.aa2dEmotion : undefined,
         speech: typeof ctx.speech === 'string' ? ctx.speech : undefined,
         statusText: typeof ctx.statusText === 'string' ? ctx.statusText : undefined,
       }),
-    toggle_avatar: () => this.setAvatar({ renderer: 'toggle' }),
     toggle_logs: (ctx) => {
       this.showLogs = typeof ctx.open === 'boolean' ? ctx.open : !this.showLogs;
     },
@@ -1218,21 +1186,6 @@ export class AidaCockpit extends LitElement {
           <button
             type="button"
             class="cyber-btn accent"
-            @click=${() => {
-              this.setAvatar({
-                renderer: this.avatarMode === 'pc98' ? 'aa2d' : 'pc98',
-              });
-            }}
-            title="Switch between PC-98 Pixel Sprite and AA2D v3.0 Rig"
-          >
-            ${this.avatarMode === 'pc98'
-              ? '[AVATAR: PC-98]'
-              : '[AVATAR: AA2D 3.0]'}
-          </button>
-
-          <button
-            type="button"
-            class="cyber-btn accent"
             @click=${this.toggleTheme}
             title="Toggle Daylight / CRT Dark Mode"
           >
@@ -1268,32 +1221,6 @@ export class AidaCockpit extends LitElement {
         ? `${status.cpu.toFixed(1)}% / ${status.memory.toFixed(1)}%`
         : status?.model ?? 'N/A';
 
-    const pendingInterrupts = this.turns.flatMap((t) =>
-      t.interrupts.filter((intr) => intr.status === 'pending')
-    );
-
-    let aa2dAction = 'idle';
-    let aa2dEmotion = 'neutral';
-    if (this.baseAvatarMode === 'error') {
-      aa2dAction = 'shake';
-      aa2dEmotion = 'angry';
-    } else if (pendingInterrupts.length > 0) {
-      aa2dAction = 'surprised_jump';
-      aa2dEmotion = 'surprised';
-    } else if (this.baseAvatarMode === 'teehee') {
-      aa2dAction = 'bounce';
-      aa2dEmotion = 'happy';
-    } else if (this.baseAvatarMode === 'talk') {
-      aa2dAction = 'speak';
-      aa2dEmotion = 'neutral';
-    } else if (this.baseAvatarMode === 'think') {
-      aa2dAction = 'think';
-      aa2dEmotion = 'thinking';
-    } else {
-      aa2dAction = this.aa2dOverrideAction || 'idle';
-      aa2dEmotion = this.aa2dOverrideEmotion || 'neutral';
-    }
-
     const activeSprite = this.currentAvatarSprite;
 
     return html`
@@ -1304,41 +1231,23 @@ export class AidaCockpit extends LitElement {
             @click=${this.handleAvatarClick}
             title="AIDA (Click to interact)"
           >
-            ${this.avatarMode === 'aa2d'
-              ? html`
-                  <aa2d-avatar
-                    src="${this.targetBaseUrl}/assets/aria.a2d.json"
-                    action=${aa2dAction}
-                    emotion=${aa2dEmotion}
-                    follow-cursor
-                    style="width: 280px; height: 280px;"
-                    @aa2d-error=${(e: CustomEvent) => {
-                      const err = e.detail?.error;
+            <div class="avatar-sprite-stack">
+              ${PC98_SPRITES.map(
+                (sprite) => html`
+                  <img
+                    class="avatar-img ${activeSprite === sprite ? 'active' : ''}"
+                    src="${this.targetBaseUrl}/assets/${sprite}.png"
+                    alt="AIDA Avatar (${sprite})"
+                    decoding="async"
+                    @error=${() => {
                       this.triggerFailFast(
-                        `AA2D v3.0 Avatar load failure: ${err?.message ?? String(err)}`
+                        `Failed to load PC-98 avatar sprite from ${this.targetBaseUrl}/assets/${sprite}.png`
                       );
                     }}
-                  ></aa2d-avatar>
+                  />
                 `
-              : html`
-                  <div class="avatar-sprite-stack">
-                    ${PC98_SPRITES.map(
-                      (sprite) => html`
-                        <img
-                          class="avatar-img ${activeSprite === sprite ? 'active' : ''}"
-                          src="${this.targetBaseUrl}/assets/${sprite}.png"
-                          alt="AIDA Avatar (${sprite})"
-                          decoding="async"
-                          @error=${() => {
-                            this.triggerFailFast(
-                              `Failed to load PC-98 avatar sprite from ${this.targetBaseUrl}/assets/${sprite}.png`
-                            );
-                          }}
-                        />
-                      `
-                    )}
-                  </div>
-                `}
+              )}
+            </div>
           </div>
         </div>
 
@@ -1387,7 +1296,7 @@ export class AidaCockpit extends LitElement {
     return html`
       <section class="operator-console" aria-label="AIDA Conversation Console">
         <div class="avatar-caption">
-          <span>AIDA [${this.avatarMode.toUpperCase()}]</span>
+          <span>AIDA [PC-98]</span>
           <span class="caption-state ${this.baseAvatarMode}">${this.baseAvatarMode.toUpperCase()}</span>
         </div>
         <div class="lcd-bezel" aria-live="polite">

@@ -81,10 +81,7 @@ export const AidaCockpitApplyStyleSchema = z.object({
 });
 
 export const AidaCockpitApplyAvatarSchema = z.object({
-  renderer: z.enum(["pc98", "aa2d"]).optional(),
   state: z.enum(["idle", "think", "talk", "teehee", "error"]).optional(),
-  aa2dAction: z.string().optional(),
-  aa2dEmotion: z.string().optional(),
   speech: z.string().optional(),
   statusText: z.string().optional(),
 });
@@ -120,7 +117,6 @@ export class AidaCockpitControlElement extends AidaCatalogElement<
   @state() private accessor activePreset: StylePresetId = "pc98-cyan";
   @state() private accessor fontScale = 1;
   @state() private accessor scanlines = true;
-  @state() private accessor avatarRenderer: "pc98" | "aa2d" = "pc98";
   @state() private accessor avatarState:
     | "idle"
     | "think"
@@ -280,9 +276,6 @@ export class AidaCockpitControlElement extends AidaCatalogElement<
           );
         }
         if (props.applyAvatar) {
-          if (props.applyAvatar.renderer) {
-            this.avatarRenderer = props.applyAvatar.renderer;
-          }
           if (props.applyAvatar.state) {
             this.avatarState = props.applyAvatar.state;
           }
@@ -399,34 +392,8 @@ export class AidaCockpitControlElement extends AidaCatalogElement<
           <div class="ctrl-section">
             <h5 class="sec-title">
               <span>AIDA Avatar Controls</span>
-              <span
-                >${this.avatarRenderer.toUpperCase()} •
-                ${this.avatarState.toUpperCase()}</span
-              >
+              <span>PC-98 • ${this.avatarState.toUpperCase()}</span>
             </h5>
-
-            <div class="btn-row">
-              <button
-                type="button"
-                class="ctrl-btn ${this.avatarRenderer === "pc98" ? "active" : ""}"
-                @click=${() => {
-                  this.avatarRenderer = "pc98";
-                  this.dispatchSelfAction("set_avatar", { renderer: "pc98" });
-                }}
-              >
-                PC-98 Pixel
-              </button>
-              <button
-                type="button"
-                class="ctrl-btn ${this.avatarRenderer === "aa2d" ? "active" : ""}"
-                @click=${() => {
-                  this.avatarRenderer = "aa2d";
-                  this.dispatchSelfAction("set_avatar", { renderer: "aa2d" });
-                }}
-              >
-                AA2D 3.0 Rig
-              </button>
-            </div>
 
             <div class="btn-row">
               ${(["idle", "think", "talk", "teehee", "error"] as const).map(

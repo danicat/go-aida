@@ -71,7 +71,7 @@ func AidaCatalog() *a2uix.Catalog {
 			{
 				Name:        "CockpitControl",
 				Description: "Client-side self-control deck for AIDA navigation/tabs, theme/palette/font scale customization, and avatar/workspace controls (executes in browser with zero model round-trip).",
-				Props:       "id: string (required); title?: string; subtitle?: string; mode?: all|navigation|style|avatar|workspace; applyStyle?: {theme?: dark|light, preset?: pc98-cyan|phosphor-green|amber-crt|crimson-ops|violet-magi|daylight-paper, accent?: string, bgPanel?: string, text?: string, fontScale?: number, scanlines?: boolean}; applyAvatar?: {renderer?: pc98|aa2d, state?: idle|think|talk|teehee|error, aa2dAction?: string, aa2dEmotion?: string, speech?: string, statusText?: string}; shortcuts?: Array<{label: string, action: string, target?: string|number}>; weight?: number.",
+				Props:       "id: string (required); title?: string; subtitle?: string; mode?: all|navigation|style|avatar|workspace; applyStyle?: {theme?: dark|light, preset?: pc98-cyan|phosphor-green|amber-crt|crimson-ops|violet-magi|daylight-paper, accent?: string, bgPanel?: string, text?: string, fontScale?: number, scanlines?: boolean}; applyAvatar?: {state?: idle|think|talk|teehee|error, speech?: string, statusText?: string}; shortcuts?: Array<{label: string, action: string, target?: string|number}>; weight?: number.",
 			},
 		},
 	}
