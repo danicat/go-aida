@@ -1,0 +1,32 @@
+# Binaries & build artifacts
+bin/
+/go-aida
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.out
+*.prof
+
+# Genkit runtime & trace artifacts
+.genkit/
+
+# Frontend dependencies & build output
+web/node_modules/
+web/dist/
+web/*.tsbuildinfo
+
+# Environment & OS files
+.env
+.env.*
+.DS_Store
+Thumbs.db
+
+# Editor & IDE directories
+.vscode/
+.idea/
+*.swp
+*.swo

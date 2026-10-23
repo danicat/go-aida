@@ -1,0 +1,27 @@
+{
+  "name": "aida-web-cockpit",
+  "private": true,
+  "version": "2.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@a2ui/lit": "^0.13.0",
+    "@a2ui/markdown-it": "^0.2.1",
+    "@a2ui/web_core": "^0.13.0",
+    "@genkit-ai/a2ui": "^0.5.0",
+    "@lit/context": "^1.1.6",
+    "genkit": "^1.42.0",
+    "lit": "^3.3.3",
+    "three": "^0.174.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/three": "^0.174.0",
+    "typescript": "^5.7.3",
+    "vite": "^6.2.0"
+  }
+}

@@ -1,0 +1,1790 @@
+/**
+ * Copyright 2026 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+import { LitElement, html, nothing } from 'lit';
+import { customElement, state } from 'lit/decorators.js';
+import '@a2ui/lit/v0_9';
+import {
+  setMarkdownRenderer,
+  MessageProcessor,
+  type ActionPayload,
+} from '@a2ui/web_core/v0_9';
+import { type LitComponentApi } from '@a2ui/lit/v0_9';
+import { renderMarkdown } from '@a2ui/markdown-it';
+import {
+  a2uiEnvelopesFromParts,
+  actionToMessage,
+  type A2uiServerEnvelope,
+} from '@genkit-ai/a2ui/client';
+import {
+  remoteAgent,
+  type AgentAPI,
+  type AgentChat,
+  type AgentTurn,
+  type AgentInput,
+} from 'genkit/beta/client';
+import { aidaCatalog } from './aida-catalog/index.js';
+import './aa2d/aa2d-sdk.js';
+import type {
+  AvatarState,
+  ChatTurn,
+  DiagnosticLogEntry,
+  QuickProbe,
+  SecurityInterruptItem,
+  StylePresetId,
+  SystemStatus,
+  TargetDeployment,
+  ThemeMode,
+} from './types.js';
+
+setMarkdownRenderer(renderMarkdown);
+
+const QUICK_PROBES: QuickProbe[] = [
+  {
+    id: 'probe-cpu-processes',
+    title: 'Processes & CPU / Memory',
+    subtitle:
+      'Top processes by CPU time, resident memory (RSS), and host load average.',
+    badge: 'PROCESSES',
+    icon: 'memory',
+    prompt:
+      'Query the top CPU and memory consuming processes and host load using osquery. Render a root Panel ("Processes & Load") with a Scene3D (mode="topology", title="Process Graph"), a HudGauge (title="CPU & Memory"), and a DataMatrix (title="Top Processes") with columns PID, Process, RSS MB, CPU s, and State.',
+  },
+  {
+    id: 'probe-network-ports',
+    title: 'Listening Ports & Sockets',
+    subtitle:
+      'Open TCP/UDP ports, bind addresses, socket states, and owning processes.',
+    badge: 'NETWORK',
+    icon: 'lan',
+    prompt:
+      'Query all listening TCP/UDP ports, active sockets, and network interfaces using osquery. Render a root Panel ("Network Listeners") with a Scene3D (mode="topology", title="Port Map"), a CyberChart (chartType="bar", title="Ports by Process"), and a DataMatrix (title="Listening Ports") with columns Port, Protocol, Address, PID, and Process.',
+  },
+  {
+    id: 'probe-storage-memory',
+    title: 'Filesystems & Virtual Memory',
+    subtitle:
+      'Mounted disks, free capacity, swap usage, and virtual memory page stats.',
+    badge: 'STORAGE',
+    icon: 'hard_drive',
+    prompt:
+      'Query mounted filesystems and memory utilization via osquery. Render a root Panel ("Storage & Memory") with a Scene3D (mode="storage", title="Disk Mounts"), a HudGauge (variant="plasma", title="Memory Pressure"), and a DataMatrix (title="Mounted Filesystems") showing Mount, Device, Type, Used %, and Free GB.',
+  },
+  {
+    id: 'probe-security-cve',
+    title: 'Security & CVE Audit',
+    subtitle:
+      'OS build version, exposed network services, and known CVE advisories.',
+    badge: 'SECURITY',
+    icon: 'shield',
+    prompt:
+      'Inspect the current OS version, kernel version, and exposed network services using osquery, then check recent advisories using Google Search. Render a root Panel ("Security Audit") with a Scene3D (mode="threat_radar", title="Exposed Services"), a CyberChart (chartType="radar", title="Risk Summary"), and a DataMatrix (title="Findings").',
+  },
+  {
+    id: 'probe-hitl-remediation',
+    title: 'Command Execution (HITL)',
+    subtitle:
+      'Run a host check and propose a shell command to test operator approval.',
+    badge: 'REMEDIATE',
+    icon: 'terminal',
+    prompt:
+      'Check temporary directory usage or DNS resolver configuration, render a concise summary Panel, and invoke the runCommand tool with a safe diagnostic command (such as checking disk usage in /tmp or inspecting local DNS state) to trigger operator approval.',
+  },
+  {
+    id: 'probe-self-controls',
+    title: 'AIDA Self-Controls & Style',
+    subtitle:
+      'Client-side tab navigation, theme/palette customizer, and avatar controls.',
+    badge: 'SELF-UI',
+    icon: 'tune',
+    prompt:
+      'Render a root Panel ("AIDA Self-Control Center") containing a CockpitControl component (mode="all", title="Navigation, Style & Avatar") so I can switch tabs, customize your color palette and font scale, and control your avatar directly on the client without model round-trips.',
+  },
+];
+
+const PC98_SPRITES: AvatarState[] = [
+  'idle',
+  'blink',
+  'talk',
+  'think',
+  'think_blink',
+  'error',
+  'teehee',
+];
+
+const VALID_PRESETS = new Set<StylePresetId>([
+  'pc98-cyan',
+  'amber-phosphor',
+  'emerald-matrix',
+  'crimson-alert',
+  'violet-synth',
+  'daylight-paper',
+]);
+
+function stripA2uiBlocks(raw: string): string {
+  return raw.replace(/```a2ui[\s\S]*?(?:```|$)/gi, '').trim();
+}
+
+@customElement('aida-cockpit')
+export class AidaCockpit extends LitElement {
+  @state() private targetBaseUrl: string = '';
+  @state() private deployments: TargetDeployment[] = [];
+  @state() private showAddTargetInput: boolean = false;
+  @state() private newTargetUrl: string = '';
+
+  @state() private systemStatus: SystemStatus | null = null;
+  @state() private statusOfflineError: string | null = null;
+
+  @state() private theme: ThemeMode = 'dark';
+  @state() private scanlines: boolean = true;
+
+  @state() private avatarMode: 'aa2d' | 'pc98' = 'pc98';
+  @state() private baseAvatarMode: 'idle' | 'think' | 'talk' | 'error' | 'teehee' = 'idle';
+  @state() private aa2dOverrideAction: string = '';
+  @state() private aa2dOverrideEmotion: string = '';
+  @state() private lcdOverrideSpeech: string = '';
+  @state() private isMouthOpen: boolean = false;
+  @state() private isBlinking: boolean = false;
+
+  @state() private lcdOperationText: string = 'READY';
+  @state() private lcdSeverity: 'nominal' | 'warning' | 'critical' = 'nominal';
+
+  @state() private turns: ChatTurn[] = [];
+  @state() private activeTurnIndex: number = -1;
+  @state() private isStreaming: boolean = false;
+  @state() private promptInput: string = '';
+  @state() private criticalError: string | null = null;
+
+  @state() private showLogs: boolean = false;
+  @state() private logs: DiagnosticLogEntry[] = [];
+  @state() private surfaceTick: number = 0;
+
+  private agent!: AgentAPI<any>;
+  private chat!: AgentChat<any>;
+  private processor!: MessageProcessor<LitComponentApi>;
+
+  private statusPollTimer?: number;
+  private blinkTimeoutId?: number;
+  private blinkEndTimeoutId?: number;
+  private talkTimer?: number;
+  private speechEndTimeoutId?: number;
+
+  private readonly onWindowSelfAction = (e: Event): void => {
+    const detail = (e as CustomEvent<{ name?: string; context?: Record<string, any> }>).detail;
+    if (detail && typeof detail.name === 'string') {
+      this.tryHandleClientSelfAction(detail.name, detail.context ?? {});
+    }
+  };
+
+  private get currentAvatarSprite(): AvatarState {
+    if (this.baseAvatarMode === 'error') return 'error';
+    if (this.baseAvatarMode === 'teehee') return 'teehee';
+    if (this.baseAvatarMode === 'talk') {
+      return this.isMouthOpen ? 'talk' : 'idle';
+    }
+    if (this.baseAvatarMode === 'think') {
+      return this.isBlinking ? 'think_blink' : 'think';
+    }
+    return this.isBlinking ? 'blink' : 'idle';
+  }
+
+  protected override createRenderRoot(): HTMLElement | DocumentFragment {
+    return this;
+  }
+
+  public override connectedCallback(): void {
+    super.connectedCallback();
+    this.initTheme();
+    this.initDeployments();
+    this.initProcessor();
+    this.initAgentClient();
+    this.startAvatarTimers();
+    window.addEventListener('aida:self-action', this.onWindowSelfAction);
+    void this.fetchSystemStatus();
+    this.statusPollTimer = window.setInterval(() => {
+      void this.fetchSystemStatus();
+    }, 10000);
+  }
+
+  public override disconnectedCallback(): void {
+    window.removeEventListener('aida:self-action', this.onWindowSelfAction);
+    super.disconnectedCallback();
+    if (this.statusPollTimer !== undefined) {
+      window.clearInterval(this.statusPollTimer);
+    }
+    if (this.blinkTimeoutId !== undefined) {
+      window.clearTimeout(this.blinkTimeoutId);
+    }
+    if (this.blinkEndTimeoutId !== undefined) {
+      window.clearTimeout(this.blinkEndTimeoutId);
+    }
+    if (this.talkTimer !== undefined) {
+      window.clearInterval(this.talkTimer);
+    }
+    if (this.speechEndTimeoutId !== undefined) {
+      window.clearTimeout(this.speechEndTimeoutId);
+    }
+    this.processor?.dispose();
+  }
+
+  private initTheme(): void {
+    const saved = localStorage.getItem('aida_theme');
+    const initial: ThemeMode = saved === 'light' || saved === 'dark' ? saved : 'dark';
+    this.applyTheme(initial);
+  }
+
+  private applyTheme(mode: ThemeMode): void {
+    this.theme = mode;
+    localStorage.setItem('aida_theme', mode);
+    const root = document.documentElement;
+    root.setAttribute('data-theme', mode);
+    root.classList.remove('a2ui-dark', 'a2ui-light');
+    root.classList.add(`a2ui-${mode}`);
+    const meta = document.querySelector('meta[name="color-scheme"]');
+    if (meta) {
+      meta.setAttribute('content', mode === 'light' ? 'light' : 'dark');
+    }
+    root.dataset.preset = mode === 'light' ? 'daylight-paper' : 'pc98-cyan';
+  }
+
+  private toggleTheme(): void {
+    this.resetStyle();
+    this.applyTheme(this.theme === 'dark' ? 'light' : 'dark');
+    this.addLog('INFO', `Switched display theme to ${this.theme.toUpperCase()}`);
+  }
+
+  private initDeployments(): void {
+    const origin = window.location.origin;
+    const defaultLocal = 'http://localhost:8090';
+    const list: TargetDeployment[] = [];
+
+    if (window.location.port === '5173') {
+      list.push({ label: `VITE PROXY (${origin})`, url: origin });
+      list.push({ label: `LOCALHOST (${defaultLocal})`, url: defaultLocal });
+      this.targetBaseUrl = origin;
+    } else {
+      list.push({ label: `CURRENT ORIGIN (${origin})`, url: origin });
+      if (origin !== defaultLocal) {
+        list.push({ label: `LOCALHOST (${defaultLocal})`, url: defaultLocal });
+      }
+      this.targetBaseUrl = origin;
+    }
+
+    this.deployments = list;
+  }
+
+  private initProcessor(): void {
+    this.processor = new MessageProcessor<LitComponentApi>(
+      [aidaCatalog],
+      async (action: ActionPayload) => {
+        await this.handleSurfaceAction(action);
+      }
+    );
+    this.processor.onSurfaceCreated((surface) => {
+      this.addLog(
+        'SURFACE',
+        `Surface created: "${surface.id}" (catalog: ${surface.defaultCatalog.id})`
+      );
+      surface.onError.subscribe((err) => {
+        const msg = `A2UI Surface Error [${err.code}]: ${err.message}`;
+        this.triggerFailFast(msg);
+      });
+      this.surfaceTick++;
+    });
+    this.processor.onSurfaceDeleted((id) => {
+      this.addLog('SURFACE', `Surface deleted: "${id}"`);
+      this.surfaceTick++;
+    });
+  }
+
+  private initAgentClient(): void {
+    const agentUrl = `${this.targetBaseUrl}/agents/aida`;
+    this.agent = remoteAgent({ url: agentUrl });
+    this.chat = this.agent.chat();
+    this.addLog('INFO', `Bound Genkit remoteAgent client to ${agentUrl}`);
+  }
+
+  private scheduleNextBlink(): void {
+    if (this.blinkTimeoutId !== undefined) {
+      window.clearTimeout(this.blinkTimeoutId);
+    }
+    const delay = 2500 + Math.random() * 3500;
+    this.blinkTimeoutId = window.setTimeout(() => {
+      if (
+        this.avatarMode === 'pc98' &&
+        (this.baseAvatarMode === 'idle' || this.baseAvatarMode === 'think')
+      ) {
+        this.isBlinking = true;
+        this.blinkEndTimeoutId = window.setTimeout(() => {
+          this.isBlinking = false;
+          this.scheduleNextBlink();
+        }, 150);
+      } else {
+        this.scheduleNextBlink();
+      }
+    }, delay);
+  }
+
+  private startAvatarTimers(): void {
+    this.scheduleNextBlink();
+
+    // Exact AIDA v1 talking loop: 150ms interval alternating strictly between 'talk' and 'idle'
+    this.talkTimer = window.setInterval(() => {
+      if (this.avatarMode !== 'pc98') return;
+      if (this.baseAvatarMode === 'talk') {
+        this.isMouthOpen = !this.isMouthOpen;
+      } else if (this.isMouthOpen) {
+        this.isMouthOpen = false;
+      }
+    }, 150);
+  }
+
+  private setAvatarMode(mode: 'idle' | 'think' | 'talk' | 'error' | 'teehee'): void {
+    if (mode !== 'talk' && this.speechEndTimeoutId !== undefined) {
+      window.clearTimeout(this.speechEndTimeoutId);
+      this.speechEndTimeoutId = undefined;
+    }
+    if (this.baseAvatarMode === mode) return;
+    this.baseAvatarMode = mode;
+    if (mode === 'talk') {
+      this.isBlinking = false;
+      this.isMouthOpen = true;
+    } else {
+      this.isMouthOpen = false;
+      if (mode === 'error' || mode === 'teehee') {
+        this.isBlinking = false;
+      }
+    }
+  }
+
+  /**
+   * Pulses the 'talk' animation ONLY while spoken prose chunks are actively arriving.
+   * Automatically stops talking after 450ms of silence (e.g. when the model moves on
+   * to rendering A2UI components or running tools).
+   */
+  private pulseSpeakingAnimation(): void {
+    this.setAvatarMode('talk');
+    if (this.speechEndTimeoutId !== undefined) {
+      window.clearTimeout(this.speechEndTimeoutId);
+    }
+    this.speechEndTimeoutId = window.setTimeout(() => {
+      this.speechEndTimeoutId = undefined;
+      if (this.baseAvatarMode === 'talk') {
+        this.setAvatarMode(this.isStreaming ? 'think' : 'idle');
+      }
+    }, 450);
+  }
+
+  private handleAvatarClick(): void {
+    if (this.baseAvatarMode === 'idle') {
+      this.setAvatarMode('teehee');
+      window.setTimeout(() => {
+        if (this.baseAvatarMode === 'teehee') {
+          this.setAvatarMode('idle');
+        }
+      }, 1200);
+    }
+  }
+
+  private addLog(
+    level: DiagnosticLogEntry['level'],
+    summary: string,
+    detail?: string
+  ): void {
+    const now = new Date();
+    const timestamp = now.toTimeString().split(' ')[0];
+    this.logs = [
+      {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        timestamp,
+        level,
+        summary,
+        detail,
+      },
+      ...this.logs.slice(0, 99),
+    ];
+  }
+
+  private triggerFailFast(errorMessage: string): void {
+    this.criticalError = errorMessage;
+    this.lcdOperationText = `ERROR`;
+    this.lcdSeverity = 'critical';
+    this.setAvatarMode('error');
+    this.addLog('ERROR', errorMessage);
+  }
+
+  private async fetchSystemStatus(): Promise<void> {
+    const url = `${this.targetBaseUrl}/api/system-status`;
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+      });
+      if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(`HTTP ${response.status} from ${url}: ${errText}`);
+      }
+      const data = (await response.json()) as SystemStatus;
+      this.systemStatus = data;
+      this.statusOfflineError = null;
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      this.systemStatus = null;
+      this.statusOfflineError = msg;
+      this.triggerFailFast(`Telemetry endpoint failure (${url}): ${msg}`);
+    }
+  }
+
+  private handleTargetChange(e: Event): void {
+    const select = e.target as HTMLSelectElement;
+    const nextUrl = select.value;
+    if (!nextUrl || nextUrl === this.targetBaseUrl) return;
+    this.switchTargetDeployment(nextUrl);
+  }
+
+  private switchTargetDeployment(nextUrl: string): void {
+    const normalized = nextUrl.trim().replace(/\/+$/, '');
+    this.targetBaseUrl = normalized;
+    this.criticalError = null;
+    this.setAvatarMode('idle');
+    this.lcdOperationText = `TARGET: ${normalized}`;
+    this.lcdSeverity = 'nominal';
+    this.initAgentClient();
+    void this.fetchSystemStatus();
+  }
+
+  private submitNewTarget(): void {
+    const candidate = this.newTargetUrl.trim().replace(/\/+$/, '');
+    if (!/^https?:\/\/[^/]+$/i.test(candidate)) {
+      this.triggerFailFast(
+        `Invalid target deployment URL "${candidate}". Must be http(s)://host[:port].`
+      );
+      return;
+    }
+    if (!this.deployments.some((d) => d.url === candidate)) {
+      this.deployments = [
+        ...this.deployments,
+        { label: `REMOTE (${candidate})`, url: candidate },
+      ];
+    }
+    this.newTargetUrl = '';
+    this.showAddTargetInput = false;
+    this.switchTargetDeployment(candidate);
+  }
+
+  private resetSession(): void {
+    this.processor.dispose();
+    this.initProcessor();
+    this.initAgentClient();
+    this.turns = [];
+    this.activeTurnIndex = -1;
+    this.criticalError = null;
+    this.isStreaming = false;
+    this.lcdOverrideSpeech = '';
+    this.setAvatarMode('idle');
+    this.lcdOperationText = 'READY';
+    this.lcdSeverity = 'nominal';
+    this.addLog('INFO', 'Cleared all A2UI surfaces and initialized fresh session.');
+  }
+
+  private selectTab(index: number): void {
+    if (index === -1) {
+      this.activeTurnIndex = -1;
+      this.lcdOperationText = 'READY';
+      this.lcdSeverity = 'nominal';
+      this.addLog('INFO', 'Navigated to Home launcher');
+      return;
+    }
+    if (index >= 0 && index < this.turns.length) {
+      this.activeTurnIndex = index;
+      this.lcdOperationText = 'READY';
+      this.lcdSeverity = 'nominal';
+      this.addLog('INFO', `Selected tab #${index + 1}`);
+    }
+  }
+
+  private applyStyle(opts: {
+    theme?: ThemeMode;
+    preset?: StylePresetId;
+    accent?: string;
+    bgPanel?: string;
+    text?: string;
+    fontScale?: number;
+    scanlines?: boolean;
+  }): void {
+    const root = document.documentElement;
+    const rootStyle = root.style;
+
+    if (opts.preset && VALID_PRESETS.has(opts.preset)) {
+      const targetTheme: ThemeMode =
+        opts.preset === 'daylight-paper' ? 'light' : 'dark';
+      if (this.theme !== targetTheme) {
+        this.applyTheme(targetTheme);
+      }
+      root.dataset.preset = opts.preset;
+      this.addLog('INFO', `Applied style preset "${opts.preset}"`);
+    } else if (opts.theme) {
+      this.applyTheme(opts.theme);
+    }
+
+    if (opts.accent) {
+      rootStyle.setProperty('--aida-accent', opts.accent);
+      rootStyle.setProperty('--aida-border-bright', opts.accent);
+    }
+    if (opts.bgPanel) {
+      rootStyle.setProperty('--aida-bg-panel', opts.bgPanel);
+    }
+    if (opts.text) {
+      rootStyle.setProperty('--aida-text', opts.text);
+    }
+    if (opts.fontScale !== undefined && !Number.isNaN(opts.fontScale)) {
+      const clamped = Math.min(Math.max(opts.fontScale, 0.8), 1.35);
+      rootStyle.fontSize = `${Math.round(clamped * 100)}%`;
+    }
+    if (opts.scanlines !== undefined) {
+      this.scanlines = Boolean(opts.scanlines);
+      if (this.scanlines) {
+        root.removeAttribute('data-scanlines');
+      } else {
+        root.setAttribute('data-scanlines', 'off');
+      }
+    }
+    this.requestUpdate();
+  }
+
+  private resetStyle(): void {
+    const root = document.documentElement;
+    for (const prop of [
+      '--aida-accent',
+      '--aida-border-bright',
+      '--aida-bg-panel',
+      '--aida-text',
+      'font-size',
+    ]) {
+      root.style.removeProperty(prop);
+    }
+    root.removeAttribute('data-scanlines');
+    this.scanlines = true;
+    this.applyTheme(this.theme);
+    this.requestUpdate();
+  }
+
+  private setAvatar(opts: {
+    renderer?: 'pc98' | 'aa2d' | 'toggle';
+    state?: 'idle' | 'think' | 'talk' | 'error' | 'teehee';
+    aa2dAction?: string;
+    aa2dEmotion?: string;
+    speech?: string;
+    statusText?: string;
+  }): void {
+    if (opts.renderer) {
+      this.avatarMode =
+        opts.renderer === 'toggle'
+          ? this.avatarMode === 'pc98'
+            ? 'aa2d'
+            : 'pc98'
+          : opts.renderer;
+    }
+    if (opts.state) {
+      this.setAvatarMode(opts.state);
+    }
+    if (opts.aa2dAction !== undefined) {
+      this.aa2dOverrideAction = opts.aa2dAction;
+    }
+    if (opts.aa2dEmotion !== undefined) {
+      this.aa2dOverrideEmotion = opts.aa2dEmotion;
+    }
+    if (opts.speech !== undefined) {
+      this.lcdOverrideSpeech = opts.speech;
+      this.pulseSpeakingAnimation();
+    }
+    if (opts.statusText !== undefined) {
+      this.lcdOperationText = opts.statusText;
+    }
+    this.addLog('INFO', `Updated AIDA avatar state (${this.avatarMode} / ${this.baseAvatarMode})`);
+  }
+
+  private closeTurnTab(e: Event, index: number): void {
+    e.stopPropagation();
+    const targetTurn = this.turns[index];
+    if (!targetTurn) return;
+
+    for (const sid of targetTurn.surfaceIds) {
+      this.processor.model.deleteSurface(sid);
+    }
+
+    const nextTurns = this.turns.filter((_, i) => i !== index);
+    this.turns = nextTurns;
+
+    if (nextTurns.length === 0) {
+      this.activeTurnIndex = -1;
+    } else if (index < this.activeTurnIndex) {
+      this.activeTurnIndex--;
+    } else if (index === this.activeTurnIndex) {
+      this.activeTurnIndex = Math.min(this.activeTurnIndex, nextTurns.length - 1);
+    }
+    this.surfaceTick++;
+  }
+
+  private ingestEnvelopes(
+    envelopes: A2uiServerEnvelope[],
+    turnId: string,
+    processedKeys: Set<string>
+  ): void {
+    if (!envelopes || envelopes.length === 0) return;
+
+    const freshEnvelopes: A2uiServerEnvelope[] = [];
+    for (const env of envelopes) {
+      const key = JSON.stringify(env);
+      if (processedKeys.has(key)) continue;
+      processedKeys.add(key);
+      freshEnvelopes.push(env);
+    }
+
+    if (freshEnvelopes.length === 0) return;
+
+    const touchedSurfaceIds: string[] = [];
+
+    for (const env of freshEnvelopes) {
+      const anyEnv = env as Record<string, any>;
+      if (anyEnv.createSurface && typeof anyEnv.createSurface.surfaceId === 'string') {
+        const sid = anyEnv.createSurface.surfaceId;
+        if (this.processor.model.getSurface(sid)) {
+          this.processor.model.deleteSurface(sid);
+        }
+        touchedSurfaceIds.push(sid);
+        this.lcdOperationText = `RENDERING VIEW...`;
+      } else if (
+        anyEnv.updateComponents &&
+        typeof anyEnv.updateComponents.surfaceId === 'string'
+      ) {
+        touchedSurfaceIds.push(anyEnv.updateComponents.surfaceId);
+        this.lcdOperationText = `RENDERING VIEW...`;
+      } else if (
+        anyEnv.updateDataModel &&
+        typeof anyEnv.updateDataModel.surfaceId === 'string'
+      ) {
+        touchedSurfaceIds.push(anyEnv.updateDataModel.surfaceId);
+      }
+    }
+
+    this.processor.processMessages(freshEnvelopes as any);
+
+    if (touchedSurfaceIds.length > 0) {
+      this.turns = this.turns.map((t) => {
+        if (t.id === turnId) {
+          const merged = Array.from(new Set([...t.surfaceIds, ...touchedSurfaceIds]));
+          return { ...t, surfaceIds: merged };
+        }
+        return {
+          ...t,
+          surfaceIds: t.surfaceIds.filter((id) => !touchedSurfaceIds.includes(id)),
+        };
+      });
+      const idx = this.turns.findIndex((t) => t.id === turnId);
+      if (idx >= 0) {
+        this.activeTurnIndex = idx;
+      }
+      this.surfaceTick++;
+    }
+  }
+
+  private resolveTabIndex(ctx: Record<string, any>): number | undefined {
+    if (typeof ctx.tabIndex === 'number') return ctx.tabIndex;
+    if (typeof ctx.index === 'number') return ctx.index;
+    const raw = ctx.tab ?? ctx.tabNumber ?? ctx.match ?? ctx.query ?? ctx.label;
+    if (typeof raw === 'number') return raw - 1;
+    if (typeof raw === 'string') {
+      const q = raw.trim().toLowerCase();
+      if (!q || q === 'current') return this.activeTurnIndex;
+      if (/^\d+$/.test(q)) return Number(q) - 1;
+      if (q === 'top' || q === 'root' || q === 'overview' || q === 'first') return 0;
+      const found = this.turns.findIndex((t) =>
+        `${t.userPrompt} ${t.agentText}`.toLowerCase().includes(q)
+      );
+      if (found >= 0) return found;
+    }
+    return undefined;
+  }
+
+  private readonly clientActions: Record<string, (ctx: Record<string, any>) => void> = {
+    toggle_theme: () => this.toggleTheme(),
+    set_theme: (ctx) => {
+      const mode = String(ctx.theme ?? ctx.mode ?? 'toggle').toLowerCase();
+      if (mode === 'light' || mode === 'dark') {
+        this.resetStyle();
+        this.applyTheme(mode);
+      } else {
+        this.toggleTheme();
+      }
+    },
+    set_style: (ctx) =>
+      this.applyStyle({
+        theme: ctx.theme === 'light' || ctx.theme === 'dark' ? ctx.theme : undefined,
+        preset: typeof ctx.preset === 'string' ? (ctx.preset as StylePresetId) : undefined,
+        accent: typeof ctx.accent === 'string' ? ctx.accent : undefined,
+        bgPanel: typeof ctx.bgPanel === 'string' ? ctx.bgPanel : undefined,
+        text: typeof ctx.text === 'string' ? ctx.text : undefined,
+        fontScale: typeof ctx.fontScale === 'number' ? ctx.fontScale : undefined,
+        scanlines: typeof ctx.scanlines === 'boolean' ? ctx.scanlines : undefined,
+      }),
+    reset_style: () => this.resetStyle(),
+    set_font_scale: (ctx) =>
+      this.applyStyle({ fontScale: Number(ctx.fontScale ?? ctx.scale ?? ctx.value ?? 1) }),
+    toggle_scanlines: (ctx) =>
+      this.applyStyle({
+        scanlines: typeof ctx.scanlines === 'boolean' ? ctx.scanlines : !this.scanlines,
+      }),
+    set_avatar: (ctx) =>
+      this.setAvatar({
+        renderer:
+          ctx.renderer === 'pc98' || ctx.renderer === 'aa2d' || ctx.renderer === 'toggle'
+            ? ctx.renderer
+            : undefined,
+        state:
+          ctx.state === 'idle' ||
+          ctx.state === 'think' ||
+          ctx.state === 'talk' ||
+          ctx.state === 'teehee' ||
+          ctx.state === 'error'
+            ? ctx.state
+            : undefined,
+        aa2dAction: typeof ctx.aa2dAction === 'string' ? ctx.aa2dAction : undefined,
+        aa2dEmotion: typeof ctx.aa2dEmotion === 'string' ? ctx.aa2dEmotion : undefined,
+        speech: typeof ctx.speech === 'string' ? ctx.speech : undefined,
+        statusText: typeof ctx.statusText === 'string' ? ctx.statusText : undefined,
+      }),
+    toggle_avatar: () => this.setAvatar({ renderer: 'toggle' }),
+    toggle_logs: (ctx) => {
+      this.showLogs = typeof ctx.open === 'boolean' ? ctx.open : !this.showLogs;
+    },
+    refresh_status: () => void this.fetchSystemStatus(),
+    reset_session: () => this.resetSession(),
+    nav_home: () => this.selectTab(-1),
+    nav_forward: () => this.selectTab(this.activeTurnIndex + 1),
+    nav_back: (ctx) => {
+      if (this.turns.length === 0) {
+        this.selectTab(-1);
+        return;
+      }
+      const resolved = ctx.tab !== undefined ? this.resolveTabIndex(ctx) : undefined;
+      this.selectTab(resolved ?? Math.max(0, this.activeTurnIndex - 1));
+    },
+    select_tab: (ctx) => {
+      const resolved = this.resolveTabIndex(ctx);
+      if (resolved !== undefined) this.selectTab(resolved);
+    },
+    close_tab: (ctx) => {
+      const idx = this.resolveTabIndex(ctx) ?? this.activeTurnIndex;
+      if (idx >= 0 && idx < this.turns.length) {
+        this.closeTurnTab(new Event('close'), idx);
+      }
+    },
+  };
+
+  private tryHandleClientSelfAction(
+    rawActionName: string,
+    ctx: Record<string, any>
+  ): boolean {
+    const stripped = rawActionName
+      .trim()
+      .replace(/^(?:aida|client|ui|self)[:._-]/i, '')
+      .toLowerCase();
+    const handler = this.clientActions[stripped];
+    if (!handler) return false;
+    handler(ctx);
+    return true;
+  }
+
+  private async handleSurfaceAction(action: ActionPayload): Promise<void> {
+    const ctx = (action.context ?? {}) as Record<string, any>;
+
+    // Intercept client-side self-actions (navigation, style, theme, avatar, workspace)
+    // and execute them immediately in the browser without calling the LLM!
+    if (this.tryHandleClientSelfAction(action.name, ctx)) {
+      return;
+    }
+
+    if (this.isStreaming) return;
+
+    const targetDesc =
+      ctx.label ??
+      ctx.name ??
+      ctx.process ??
+      (ctx.pid !== undefined ? `PID ${ctx.pid}` : undefined) ??
+      (ctx.port !== undefined ? `Port ${ctx.port}` : undefined) ??
+      ctx.nodeId ??
+      action.name.replace(/_/g, ' ');
+
+    this.addLog(
+      'SURFACE',
+      `Action "${action.name}" on "${targetDesc}" (surface "${action.surfaceId}")`,
+      JSON.stringify(ctx)
+    );
+    const message = actionToMessage(action as any);
+    await this.executeTurn(
+      { message },
+      String(targetDesc),
+      true,
+      action.name
+    );
+  }
+
+  private async handlePromptSubmit(e: Event): Promise<void> {
+    e.preventDefault();
+    const text = this.promptInput.trim();
+    if (!text || this.isStreaming) return;
+    this.promptInput = '';
+    await this.executeTurn(text, text, false);
+  }
+
+  private async runQuickProbe(probe: QuickProbe): Promise<void> {
+    if (this.isStreaming) return;
+    await this.executeTurn(probe.prompt, probe.title, false);
+  }
+
+  private async executeTurn(
+    input: string | AgentInput,
+    displayPrompt: string,
+    isActionTurn: boolean,
+    actionName?: string
+  ): Promise<void> {
+    const turnId = `turn-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const timestamp = new Date().toTimeString().split(' ')[0];
+
+    const newTurn: ChatTurn = {
+      id: turnId,
+      timestamp,
+      userPrompt: displayPrompt,
+      isActionTurn,
+      actionName,
+      agentText: '',
+      surfaceIds: [],
+      toolCalls: [],
+      interrupts: [],
+      status: 'streaming',
+    };
+
+    const hadActiveSurface =
+      this.activeTurnIndex >= 0 &&
+      this.turns[this.activeTurnIndex]?.surfaceIds.length > 0;
+
+    this.turns = [...this.turns, newTurn];
+    if (!hadActiveSurface) {
+      this.activeTurnIndex = this.turns.length - 1;
+    }
+
+    this.criticalError = null;
+    this.lcdOverrideSpeech = '';
+    this.isStreaming = true;
+    this.setAvatarMode('think');
+    this.lcdOperationText = `QUERYING: ${displayPrompt}`;
+    this.lcdSeverity = 'nominal';
+
+    this.addLog('INFO', `Turn started: ${displayPrompt}`);
+
+    const turn = this.chat.sendStream(input);
+    await this.consumeTurnStream(turn, turnId);
+  }
+
+  private dismissInterrupt(turnId: string, interruptId: string): void {
+    this.turns = this.turns.map((t) =>
+      t.id === turnId
+        ? {
+            ...t,
+            interrupts: t.interrupts.filter((intr) => intr.id !== interruptId),
+          }
+        : t
+    );
+  }
+
+  private clearResolvedInterrupts(turnId: string): void {
+    this.turns = this.turns.map((t) =>
+      t.id === turnId
+        ? {
+            ...t,
+            interrupts: t.interrupts.filter((intr) => intr.status === 'pending'),
+          }
+        : t
+    );
+  }
+
+  private async handleInterruptDecision(
+    turnId: string,
+    interruptItem: SecurityInterruptItem,
+    approved: boolean
+  ): Promise<void> {
+    if (this.isStreaming) return;
+
+    this.turns = this.turns.map((t) => {
+      if (t.id !== turnId) return t;
+      return {
+        ...t,
+        status: 'streaming',
+        interrupts: t.interrupts.map((intr) =>
+          intr.id === interruptItem.id
+            ? { ...intr, status: approved ? 'approved' : 'rejected' }
+            : intr
+        ),
+      };
+    });
+
+    this.isStreaming = true;
+    this.criticalError = null;
+    this.setAvatarMode('think');
+    this.lcdOperationText = approved
+      ? `RUNNING COMMAND: ${interruptItem.command}`
+      : `COMMAND DENIED`;
+    this.lcdSeverity = approved ? 'warning' : 'nominal';
+
+    this.addLog(
+      'TOOL',
+      `Operator ${approved ? 'APPROVED' : 'DENIED'} runCommand: ${interruptItem.command}`,
+      interruptItem.feedback
+    );
+
+    const rawIntr = interruptItem.rawInterrupt as { restart: () => any };
+    const restartPart = rawIntr.restart();
+    restartPart.metadata = {
+      ...(restartPart.metadata ?? {}),
+      resumed: {
+        approved,
+        feedback: interruptItem.feedback || undefined,
+      },
+    };
+
+    const resumedTurn = this.chat.resumeStream({ restart: [restartPart] });
+    await this.consumeTurnStream(resumedTurn, turnId);
+  }
+
+  private async consumeTurnStream(
+    turn: AgentTurn<any>,
+    turnId: string
+  ): Promise<void> {
+    const processedEnvelopeKeys = new Set<string>();
+    let rawTextBuffer = '';
+    let enteredA2uiFence = false;
+
+    try {
+      for await (const chunk of turn.stream) {
+        if (chunk.toolRequests && chunk.toolRequests.length > 0) {
+          for (const tr of chunk.toolRequests) {
+            const toolName = tr.toolRequest.name;
+            this.setAvatarMode('think');
+            this.lcdOperationText = `EXECUTING: ${toolName}`;
+            this.lcdSeverity = 'warning';
+            this.addLog(
+              'TOOL',
+              `Tool request: ${toolName}`,
+              JSON.stringify(tr.toolRequest.input ?? {})
+            );
+            this.turns = this.turns.map((t) =>
+              t.id === turnId && !t.toolCalls.includes(toolName)
+                ? { ...t, toolCalls: [...t.toolCalls, toolName] }
+                : t
+            );
+          }
+        }
+
+        if (chunk.text) {
+          rawTextBuffer += chunk.text;
+          if (/```a2ui/i.test(rawTextBuffer)) {
+            enteredA2uiFence = true;
+          }
+          const cleanSpoken = stripA2uiBlocks(rawTextBuffer);
+          this.turns = this.turns.map((t) =>
+            t.id === turnId ? { ...t, agentText: cleanSpoken } : t
+          );
+
+          // Only animate AIDA's mouth while she is actively streaming spoken prose,
+          // NOT when she is generating A2UI component JSON.
+          if (!enteredA2uiFence && chunk.text.trim().length > 0) {
+            this.pulseSpeakingAnimation();
+          } else if (enteredA2uiFence) {
+            this.setAvatarMode('think');
+          }
+        }
+
+        const envelopes = a2uiEnvelopesFromParts(chunk.raw.modelChunk?.content);
+        if (envelopes.length > 0) {
+          // Rendering A2UI components is NOT speaking — switch out of 'talk'
+          this.setAvatarMode('think');
+          this.clearResolvedInterrupts(turnId);
+          this.ingestEnvelopes(envelopes, turnId, processedEnvelopeKeys);
+        }
+      }
+
+      const res = await turn.response;
+
+      const finalEnvelopes = a2uiEnvelopesFromParts(res.message?.content);
+      if (finalEnvelopes.length > 0) {
+        this.setAvatarMode('think');
+        this.clearResolvedInterrupts(turnId);
+        this.ingestEnvelopes(finalEnvelopes, turnId, processedEnvelopeKeys);
+      }
+
+      if (res.text) {
+        const cleanFinal = stripA2uiBlocks(res.text);
+        this.turns = this.turns.map((t) =>
+          t.id === turnId && !t.agentText ? { ...t, agentText: cleanFinal } : t
+        );
+      }
+
+      const turnIndex = this.turns.findIndex((t) => t.id === turnId);
+      if (turnIndex >= 0) {
+        this.activeTurnIndex = turnIndex;
+      }
+
+      if (res.interrupts && res.interrupts.length > 0) {
+        const batchTs = Date.now();
+        const mappedInterrupts: SecurityInterruptItem[] = res.interrupts.map(
+          (intr, idx) => {
+            const rawInput = (intr.input ?? {}) as Record<string, any>;
+            const metaInterrupt =
+              ((intr as any).metadata?.interrupt as Record<string, any>) ?? {};
+            const command =
+              String(rawInput.command ?? metaInterrupt.command ?? 'UNKNOWN COMMAND');
+            const reason =
+              String(
+                rawInput.reason ??
+                  metaInterrupt.reason ??
+                  'Remediation requires explicit operator confirmation.'
+              );
+            const risk = String(rawInput.risk ?? metaInterrupt.risk ?? 'HIGH');
+            return {
+              id: `${turnId}-intr-${batchTs}-${idx}`,
+              toolName: intr.name,
+              command,
+              reason,
+              risk,
+              rawInterrupt: intr,
+              status: 'pending',
+              feedback: '',
+            };
+          }
+        );
+
+        this.turns = this.turns.map((t) =>
+          t.id === turnId
+            ? {
+                ...t,
+                status: 'awaiting_approval',
+                // Automatically clear any previously executed/denied commands so only pending interrupts are shown
+                interrupts: mappedInterrupts,
+              }
+            : t
+        );
+        this.setAvatarMode('think');
+        this.lcdOperationText = 'APPROVAL REQUIRED: runCommand';
+        this.lcdSeverity = 'critical';
+        this.addLog(
+          'WARN',
+          `Security interrupt triggered (${mappedInterrupts.length} pending confirmation)`
+        );
+      } else {
+        this.turns = this.turns.map((t) =>
+          t.id === turnId
+            ? {
+                ...t,
+                status: 'completed',
+                // Automatically clear executed/denied commands when the turn finishes
+                interrupts: [],
+              }
+            : t
+        );
+        this.setAvatarMode('idle');
+        this.lcdOperationText = 'READY';
+        this.lcdSeverity = 'nominal';
+      }
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      this.turns = this.turns.map((t) =>
+        t.id === turnId
+          ? {
+              ...t,
+              status: 'error',
+              errorMessage: msg,
+              interrupts: t.interrupts.filter((intr) => intr.status === 'pending'),
+            }
+          : t
+      );
+      const turnIndex = this.turns.findIndex((t) => t.id === turnId);
+      if (turnIndex >= 0) {
+        this.activeTurnIndex = turnIndex;
+      }
+      this.triggerFailFast(`Agent stream failure: ${msg}`);
+    } finally {
+      this.isStreaming = false;
+    }
+  }
+
+  private renderTopBar() {
+    const status = this.systemStatus;
+    const healthRaw =
+      status?.health?.toUpperCase() ?? (this.statusOfflineError ? 'OFFLINE' : 'NOMINAL');
+    const healthClass =
+      healthRaw === 'NOMINAL'
+        ? 'nominal'
+        : healthRaw === 'WARNING'
+          ? 'warning'
+          : 'critical';
+    const healthLabel =
+      healthRaw === 'NOMINAL'
+        ? 'NOMINAL [OK]'
+        : healthRaw === 'WARNING'
+          ? 'WARNING [WARN]'
+          : healthRaw === 'CRITICAL'
+            ? 'CRITICAL [CRIT]'
+            : 'OFFLINE [ERR]';
+
+    return html`
+      <header class="cockpit-topbar">
+        <div class="brand-cluster">
+          <h1 class="brand-title">AIDA // SYSTEM DIAGNOSTICS</h1>
+          <span class="health-badge ${healthClass}">
+            <span class="health-dot"></span>
+            ${healthLabel}
+          </span>
+        </div>
+
+        <div class="header-controls">
+          <div class="target-selector-group">
+            <span class="target-label">HOST:</span>
+            <select
+              class="cyber-select"
+              aria-label="Target Deployment Selector"
+              .value=${this.targetBaseUrl}
+              @change=${this.handleTargetChange}
+            >
+              ${this.deployments.map(
+                (d) => html`
+                  <option value=${d.url} ?selected=${d.url === this.targetBaseUrl}>
+                    ${d.label}
+                  </option>
+                `
+              )}
+            </select>
+            <button
+              type="button"
+              class="cyber-btn accent"
+              @click=${() => {
+                this.showAddTargetInput = !this.showAddTargetInput;
+              }}
+            >
+              [+ HOST]
+            </button>
+          </div>
+
+          ${this.showAddTargetInput
+            ? html`
+                <div class="target-add-inline">
+                  <input
+                    type="url"
+                    class="cyber-input-sm"
+                    aria-label="Remote target deployment URL"
+                    placeholder="http://host:8090"
+                    .value=${this.newTargetUrl}
+                    @input=${(e: Event) => {
+                      this.newTargetUrl = (e.target as HTMLInputElement).value;
+                    }}
+                    @keydown=${(e: KeyboardEvent) => {
+                      if (e.key === 'Enter') this.submitNewTarget();
+                    }}
+                  />
+                  <button
+                    type="button"
+                    class="cyber-btn nominal"
+                    @click=${this.submitNewTarget}
+                  >
+                    [CONNECT]
+                  </button>
+                </div>
+              `
+            : nothing}
+
+          <button
+            type="button"
+            class="cyber-btn accent"
+            @click=${() => {
+              this.setAvatar({
+                renderer: this.avatarMode === 'pc98' ? 'aa2d' : 'pc98',
+              });
+            }}
+            title="Switch between PC-98 Pixel Sprite and AA2D v3.0 Rig"
+          >
+            ${this.avatarMode === 'pc98'
+              ? '[AVATAR: PC-98]'
+              : '[AVATAR: AA2D 3.0]'}
+          </button>
+
+          <button
+            type="button"
+            class="cyber-btn accent"
+            @click=${this.toggleTheme}
+            title="Toggle Daylight / CRT Dark Mode"
+          >
+            ${this.theme === 'dark' ? '[☀ LIGHT]' : '[☾ DARK]'}
+          </button>
+
+          <button
+            type="button"
+            class="cyber-btn"
+            @click=${() => {
+              this.showLogs = !this.showLogs;
+            }}
+          >
+            [LOGS (${this.logs.length})]
+          </button>
+
+          <button
+            type="button"
+            class="cyber-btn danger"
+            @click=${this.resetSession}
+          >
+            [RESET]
+          </button>
+        </div>
+      </header>
+    `;
+  }
+
+  private renderOperatorSidebar() {
+    const status = this.systemStatus;
+    const cpuMemStr =
+      status?.cpu !== undefined && status?.memory !== undefined
+        ? `${status.cpu.toFixed(1)}% / ${status.memory.toFixed(1)}%`
+        : status?.model ?? 'N/A';
+
+    const pendingInterrupts = this.turns.flatMap((t) =>
+      t.interrupts.filter((intr) => intr.status === 'pending')
+    );
+
+    let aa2dAction = 'idle';
+    let aa2dEmotion = 'neutral';
+    if (this.baseAvatarMode === 'error') {
+      aa2dAction = 'shake';
+      aa2dEmotion = 'angry';
+    } else if (pendingInterrupts.length > 0) {
+      aa2dAction = 'surprised_jump';
+      aa2dEmotion = 'surprised';
+    } else if (this.baseAvatarMode === 'teehee') {
+      aa2dAction = 'bounce';
+      aa2dEmotion = 'happy';
+    } else if (this.baseAvatarMode === 'talk') {
+      aa2dAction = 'speak';
+      aa2dEmotion = 'neutral';
+    } else if (this.baseAvatarMode === 'think') {
+      aa2dAction = 'think';
+      aa2dEmotion = 'thinking';
+    } else {
+      aa2dAction = this.aa2dOverrideAction || 'idle';
+      aa2dEmotion = this.aa2dOverrideEmotion || 'neutral';
+    }
+
+    const activeSprite = this.currentAvatarSprite;
+
+    return html`
+      <aside class="operator-sidebar pc98-frame" aria-label="AIDA Avatar & Host Telemetry">
+        <div class="avatar-crt-wrapper">
+          <div
+            class="avatar-crt-frame ${this.baseAvatarMode === 'error' ? 'error-state' : ''}"
+            @click=${this.handleAvatarClick}
+            title="AIDA (Click to interact)"
+          >
+            ${this.avatarMode === 'aa2d'
+              ? html`
+                  <aa2d-avatar
+                    src="${this.targetBaseUrl}/assets/aria.a2d.json"
+                    action=${aa2dAction}
+                    emotion=${aa2dEmotion}
+                    follow-cursor
+                    style="width: 280px; height: 280px;"
+                    @aa2d-error=${(e: CustomEvent) => {
+                      const err = e.detail?.error;
+                      this.triggerFailFast(
+                        `AA2D v3.0 Avatar load failure: ${err?.message ?? String(err)}`
+                      );
+                    }}
+                  ></aa2d-avatar>
+                `
+              : html`
+                  <div class="avatar-sprite-stack">
+                    ${PC98_SPRITES.map(
+                      (sprite) => html`
+                        <img
+                          class="avatar-img ${activeSprite === sprite ? 'active' : ''}"
+                          src="${this.targetBaseUrl}/assets/${sprite}.png"
+                          alt="AIDA Avatar (${sprite})"
+                          decoding="async"
+                          @error=${() => {
+                            this.triggerFailFast(
+                              `Failed to load PC-98 avatar sprite from ${this.targetBaseUrl}/assets/${sprite}.png`
+                            );
+                          }}
+                        />
+                      `
+                    )}
+                  </div>
+                `}
+          </div>
+        </div>
+
+        <div class="sysinfo-grid">
+          <div class="sysinfo-cell">
+            <span class="sysinfo-key">HOST</span>
+            <span class="sysinfo-val" title=${status?.hostname ?? 'OFFLINE'}>
+              ${status?.hostname ?? 'OFFLINE'}
+            </span>
+          </div>
+          <div class="sysinfo-cell">
+            <span class="sysinfo-key">KERNEL</span>
+            <span class="sysinfo-val" title=${status?.kernel ?? 'OFFLINE'}>
+              ${status?.kernel ?? 'OFFLINE'}
+            </span>
+          </div>
+          <div class="sysinfo-cell">
+            <span class="sysinfo-key">OSQUERY</span>
+            <span class="sysinfo-val">v${status?.osqueryVersion ?? '---'}</span>
+          </div>
+          <div class="sysinfo-cell">
+            <span class="sysinfo-key">OS / ARCH</span>
+            <span class="sysinfo-val">${status?.os ?? 'OFFLINE'}</span>
+          </div>
+          <div class="sysinfo-cell">
+            <span class="sysinfo-key">UPTIME</span>
+            <span class="sysinfo-val">${status?.uptime ?? 'OFFLINE'}</span>
+          </div>
+          <div class="sysinfo-cell">
+            <span class="sysinfo-key">CPU / MEM</span>
+            <span class="sysinfo-val">${cpuMemStr}</span>
+          </div>
+        </div>
+      </aside>
+    `;
+  }
+
+  private renderOperatorConsole(activeTurn: ChatTurn | null) {
+    const spokenText =
+      this.lcdOverrideSpeech ||
+      activeTurn?.agentText?.trim() ||
+      (this.isStreaming
+        ? 'Running host queries...'
+        : 'Select a diagnostic view below or enter a query.');
+
+    return html`
+      <section class="operator-console" aria-label="AIDA Conversation Console">
+        <div class="avatar-caption">
+          <span>AIDA [${this.avatarMode.toUpperCase()}]</span>
+          <span class="caption-state ${this.baseAvatarMode}">${this.baseAvatarMode.toUpperCase()}</span>
+        </div>
+        <div class="lcd-bezel" aria-live="polite">
+          <div class="lcd-line status-line ${this.lcdSeverity}">
+            <span>● ${this.lcdOperationText}</span>
+            ${activeTurn && activeTurn.toolCalls.length > 0
+              ? html`
+                  <div class="turn-meta">
+                    ${activeTurn.toolCalls.map(
+                      (tc) => html`<span class="tool-pill">⚙ ${tc}</span>`
+                    )}
+                  </div>
+                `
+              : nothing}
+          </div>
+          <div class="lcd-speech">
+            ${spokenText}
+          </div>
+        </div>
+      </section>
+    `;
+  }
+
+  private renderQuickProbes() {
+    return html`
+      <section class="quick-probe-stage">
+        <div class="probe-grid">
+          ${QUICK_PROBES.map(
+            (probe) => html`
+              <button
+                type="button"
+                class="probe-card pc98-frame"
+                ?disabled=${this.isStreaming}
+                @click=${() => this.runQuickProbe(probe)}
+              >
+                <div class="probe-card-top">
+                  <span class="probe-badge">${probe.badge}</span>
+                  <span class="material-symbols-outlined" aria-hidden="true">${probe.icon}</span>
+                </div>
+                <div class="probe-title">${probe.title}</div>
+                <div class="probe-desc">${probe.subtitle}</div>
+              </button>
+            `
+          )}
+        </div>
+      </section>
+    `;
+  }
+
+  private renderInterruptCard(turn: ChatTurn, intr: SecurityInterruptItem) {
+    const isPending = intr.status === 'pending';
+
+    if (!isPending) {
+      return html`
+        <div class="hitl-executed-pill pc98-frame ${intr.status}">
+          <span class="hitl-executed-status">
+            ${intr.status === 'approved' ? '⚙ RUNNING:' : '✗ DENIED:'}
+          </span>
+          <code class="hitl-executed-cmd">${intr.command}</code>
+          <button
+            type="button"
+            class="cyber-btn"
+            @click=${() => this.dismissInterrupt(turn.id, intr.id)}
+            title="Clear command notification"
+          >
+            [× CLEAR]
+          </button>
+        </div>
+      `;
+    }
+
+    return html`
+      <div class="hitl-interrupt-card pc98-frame">
+        <div class="hitl-header">
+          <span class="hitl-title">
+            [🚨 COMMAND APPROVAL REQUIRED]
+          </span>
+          <div style="display: inline-flex; align-items: center; gap: 8px;">
+            <span class="hitl-risk-badge">RISK: ${intr.risk.toUpperCase()}</span>
+          </div>
+        </div>
+
+        <div class="hitl-grid">
+          <div class="hitl-key">TOOL</div>
+          <div>${intr.toolName}</div>
+
+          <div class="hitl-key">COMMAND</div>
+          <div class="hitl-code">${intr.command}</div>
+
+          <div class="hitl-key">REASON</div>
+          <div>${intr.reason}</div>
+
+          <div class="hitl-key">STATUS</div>
+          <div>AWAITING APPROVAL</div>
+        </div>
+
+        <div class="hitl-actions">
+          <input
+            type="text"
+            class="hitl-feedback-input"
+            aria-label="Operator approval feedback"
+            placeholder="Optional note..."
+            .value=${intr.feedback}
+            @input=${(e: Event) => {
+              const val = (e.target as HTMLInputElement).value;
+              intr.feedback = val;
+              this.requestUpdate();
+            }}
+          />
+          <button
+            type="button"
+            class="cyber-btn nominal"
+            ?disabled=${this.isStreaming}
+            @click=${() => this.handleInterruptDecision(turn.id, intr, true)}
+          >
+            [✓ APPROVE]
+          </button>
+          <button
+            type="button"
+            class="cyber-btn danger"
+            ?disabled=${this.isStreaming}
+            @click=${() => this.handleInterruptDecision(turn.id, intr, false)}
+          >
+            [✗ DENY]
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  private handleTabKeydown(e: KeyboardEvent, idx: number): void {
+    if (this.turns.length === 0) return;
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    const delta = e.key === 'ArrowRight' ? 1 : -1;
+    const nextIdx = (idx + delta + this.turns.length) % this.turns.length;
+    this.selectTab(nextIdx);
+    void this.updateComplete.then(() => {
+      const nextBtn = this.querySelector<HTMLButtonElement>(`#aida-tab-${nextIdx}`);
+      nextBtn?.focus();
+    });
+  }
+
+  private renderCanvasNavBar() {
+    if (this.turns.length === 0) {
+      return nothing;
+    }
+
+    const canBack = this.activeTurnIndex > 0;
+    const canForward =
+      this.activeTurnIndex >= 0 && this.activeTurnIndex < this.turns.length - 1;
+
+    return html`
+      <nav class="canvas-nav-bar" aria-label="View Tabs">
+        <div class="nav-controls-left">
+          <button
+            type="button"
+            class="cyber-btn ${this.activeTurnIndex === -1 ? 'accent' : ''}"
+            @click=${() => {
+              this.activeTurnIndex = -1;
+            }}
+            title="Show Quick Probes"
+          >
+            [⌂ VIEWS]
+          </button>
+          <button
+            type="button"
+            class="cyber-btn"
+            ?disabled=${!canBack}
+            @click=${() => {
+              if (this.activeTurnIndex > 0) this.activeTurnIndex--;
+            }}
+            title="Previous tab"
+          >
+            [◀]
+          </button>
+          <button
+            type="button"
+            class="cyber-btn"
+            ?disabled=${!canForward}
+            @click=${() => {
+              if (this.activeTurnIndex < this.turns.length - 1) this.activeTurnIndex++;
+            }}
+            title="Next tab"
+          >
+            [▶]
+          </button>
+        </div>
+
+        <div class="breadcrumb-trail" role="tablist">
+          ${this.turns.map((t, idx) => {
+            const isCurrent = idx === this.activeTurnIndex;
+            const rawPrompt = (t.userPrompt ?? 'View')
+              .replace(/^DRILL-DOWN\s*\/\/\s*/i, '')
+              .replace(/^\[|\]$/g, '');
+            const shortLabel =
+              rawPrompt.length > 26 ? `${rawPrompt.slice(0, 24)}…` : rawPrompt;
+            return html`
+              <div
+                class="breadcrumb-step ${isCurrent ? 'active' : ''} ${t.status}"
+              >
+                <button
+                  type="button"
+                  id="aida-tab-${idx}"
+                  class="breadcrumb-tab-btn"
+                  role="tab"
+                  aria-controls="aida-tabpanel"
+                  aria-selected=${isCurrent ? 'true' : 'false'}
+                  tabindex=${isCurrent ? '0' : '-1'}
+                  title=${t.userPrompt ?? ''}
+                  @click=${() => {
+                    this.selectTab(idx);
+                  }}
+                  @keydown=${(e: KeyboardEvent) => this.handleTabKeydown(e, idx)}
+                >
+                  <span class="step-idx">#${idx + 1}</span>
+                  <span class="step-label">${shortLabel}</span>
+                </button>
+                <button
+                  type="button"
+                  class="tab-close-btn"
+                  title="Close tab"
+                  aria-label="Close tab ${shortLabel}"
+                  @click=${(e: Event) => this.closeTurnTab(e, idx)}
+                >
+                  ×
+                </button>
+              </div>
+            `;
+          })}
+        </div>
+      </nav>
+    `;
+  }
+
+  private renderActiveCanvasTurn(turn: ChatTurn) {
+    void this.surfaceTick;
+    const latestTurn = this.turns[this.turns.length - 1];
+    const isSynthesizingNextTurn =
+      this.isStreaming && latestTurn && latestTurn.id !== turn.id;
+
+    return html`
+      <div
+        class="active-stage-container"
+        role="tabpanel"
+        id="aida-tabpanel"
+        aria-labelledby="aida-tab-${this.activeTurnIndex}"
+      >
+        ${turn.interrupts.length > 0
+          ? html`
+              <div class="hitl-interrupt-list">
+                ${turn.interrupts.map((intr) => this.renderInterruptCard(turn, intr))}
+              </div>
+            `
+          : nothing}
+
+        <div class="stage-surface-viewport">
+          ${turn.surfaceIds.length > 0
+            ? html`
+                <div class="turn-surfaces">
+                  ${turn.surfaceIds.map((sid) => {
+                    const surfaceModel = this.processor.getSurface(sid);
+                    if (!surfaceModel) return nothing;
+                    return html`
+                      <div class="surface-wrapper">
+                        <a2ui-surface .surface=${surfaceModel}></a2ui-surface>
+                      </div>
+                    `;
+                  })}
+                </div>
+              `
+            : turn.status === 'streaming'
+              ? html`
+                  <div class="stage-loading-holo">
+                    <div class="holo-spinner"></div>
+                    <div class="holo-loading-title">
+                      QUERYING HOST...
+                    </div>
+                    <div class="holo-loading-sub">${this.lcdOperationText}</div>
+                  </div>
+                `
+              : nothing}
+
+          ${isSynthesizingNextTurn
+            ? html`
+                <div class="drilldown-loading-overlay">
+                  <div class="holo-spinner"></div>
+                  <div class="holo-loading-title">
+                    LOADING: ${latestTurn.userPrompt}
+                  </div>
+                  <div class="holo-loading-sub">${this.lcdOperationText}</div>
+                </div>
+              `
+            : nothing}
+        </div>
+
+        ${turn.errorMessage
+          ? html`
+              <div class="fail-fast-detail" style="color: var(--aida-critical);">
+                [ERROR]: ${turn.errorMessage}
+              </div>
+            `
+          : nothing}
+      </div>
+    `;
+  }
+
+  protected override render() {
+    const activeTurn =
+      this.activeTurnIndex >= 0 && this.activeTurnIndex < this.turns.length
+        ? this.turns[this.activeTurnIndex]
+        : null;
+
+    return html`
+      ${this.renderTopBar()}
+
+      ${this.criticalError
+        ? html`
+            <div class="fail-fast-banner" role="alert">
+              <div class="fail-fast-content">
+                <div class="fail-fast-title">
+                  🚨 DIAGNOSTIC ERROR
+                </div>
+                <div class="fail-fast-detail">${this.criticalError}</div>
+              </div>
+              <button
+                type="button"
+                class="cyber-btn danger"
+                @click=${() => {
+                  this.criticalError = null;
+                  if (!this.isStreaming) this.setAvatarMode('idle');
+                }}
+              >
+                [DISMISS]
+              </button>
+            </div>
+          `
+        : nothing}
+
+      ${this.showLogs
+        ? html`
+            <aside class="log-drawer">
+              ${this.logs.length === 0
+                ? html`<div class="log-entry">No events recorded yet.</div>`
+                : this.logs.map(
+                    (entry) => html`
+                      <div class="log-entry">
+                        <span class="log-time">[${entry.timestamp}]</span>
+                        <span class="log-level ${entry.level}">${entry.level}</span>
+                        <span>${entry.summary}</span>
+                        ${entry.detail ? html`<span>— ${entry.detail}</span>` : nothing}
+                      </div>
+                    `
+                  )}
+            </aside>
+          `
+        : nothing}
+
+      <div class="cockpit-deck">
+        ${this.renderOperatorSidebar()}
+
+        <main class="cockpit-canvas">
+          ${this.renderOperatorConsole(activeTurn)}
+          ${this.renderCanvasNavBar()}
+          <div class="canvas-stage-body">
+            ${activeTurn ? this.renderActiveCanvasTurn(activeTurn) : this.renderQuickProbes()}
+          </div>
+        </main>
+      </div>
+
+      <form class="cockpit-prompt-bar" @submit=${this.handlePromptSubmit}>
+        <span class="prompt-prefix">aida&gt;</span>
+        <input
+          type="text"
+          class="prompt-input"
+          aria-label="Diagnostic query or command prompt"
+          placeholder="Inspect processes, ports, filesystems, or ask AIDA to run a command..."
+          .value=${this.promptInput}
+          ?disabled=${this.isStreaming}
+          @input=${(e: Event) => {
+            this.promptInput = (e.target as HTMLInputElement).value;
+          }}
+        />
+        <button
+          type="submit"
+          class="cyber-btn accent"
+          ?disabled=${this.isStreaming || !this.promptInput.trim()}
+        >
+          ${this.isStreaming ? '[RUNNING...]' : '[RUN]'}
+        </button>
+      </form>
+    `;
+  }
+}
+
+declare global {
+  interface HTMLElementTagNameMap {
+    'aida-cockpit': AidaCockpit;
+  }
+}
