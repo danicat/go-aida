@@ -38,7 +38,7 @@ import (
 
 const (
 	// DefaultAddr is the default loopback HTTP listen address for the AIDA Web Cockpit.
-	DefaultAddr = "127.0.0.1:8090"
+	DefaultAddr = "127.0.0.1:8080"
 
 	// DefaultAssetsDir is the default directory containing PC-98 avatar sprite PNGs.
 	DefaultAssetsDir = "assets"
@@ -216,15 +216,9 @@ func New(cfg Config) (*Server, error) {
 		pattern := route.Pattern()
 		mux.HandleFunc(pattern, handler)
 		srv.routes = append(srv.routes, pattern)
-		if strings.HasPrefix(route.Path, "/agents/") {
-			apiPattern := fmt.Sprintf("%s /api%s", route.Method, route.Path)
-			mux.HandleFunc(apiPattern, handler)
-			srv.routes = append(srv.routes, apiPattern)
-		}
 	}
 
 	mux.HandleFunc("GET /api/system-status", srv.handleSystemStatus)
-	mux.HandleFunc("GET /api/status", srv.handleSystemStatus)
 
 	assetsFS := http.StripPrefix("/assets/", http.FileServer(http.Dir(assetsDir)))
 	webFS := http.FileServer(http.Dir(webDir))

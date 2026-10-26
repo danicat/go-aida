@@ -72,81 +72,95 @@ func TestServer_SystemStatus_LiveOsquery(t *testing.T) {
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
-	for _, endpoint := range []string{"/api/system-status", "/api/status"} {
-		req, err := http.NewRequest(http.MethodGet, ts.URL+endpoint, nil)
-		if err != nil {
-			t.Fatalf("NewRequest GET %s failed: %v", endpoint, err)
-		}
-		req.Header.Set("Origin", "http://localhost:5173")
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/api/system-status", nil)
+	if err != nil {
+		t.Fatalf("NewRequest GET /api/system-status failed: %v", err)
+	}
+	req.Header.Set("Origin", "http://localhost:5173")
 
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatalf("GET %s failed: %v", endpoint, err)
-		}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /api/system-status failed: %v", err)
+	}
 
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			_ = resp.Body.Close()
-			t.Fatalf("GET %s status = %d, want 200; body=%s", endpoint, resp.StatusCode, string(body))
-		}
-
-		if got := resp.Header.Get("Access-Control-Allow-Origin"); got != "http://localhost:5173" {
-			t.Errorf("GET %s Access-Control-Allow-Origin = %q, want %q", endpoint, got, "http://localhost:5173")
-		}
-		if got := resp.Header.Get("X-Content-Type-Options"); got != "nosniff" {
-			t.Errorf("GET %s X-Content-Type-Options = %q, want %q", endpoint, got, "nosniff")
-		}
-		if got := resp.Header.Get("X-Frame-Options"); got != "DENY" {
-			t.Errorf("GET %s X-Frame-Options = %q, want %q", endpoint, got, "DENY")
-		}
-		if got := resp.Header.Get("Content-Security-Policy"); got != "frame-ancestors 'none'" {
-			t.Errorf("GET %s Content-Security-Policy = %q, want %q", endpoint, got, "frame-ancestors 'none'")
-		}
-
-		var status SystemStatus
-		decodeErr := json.NewDecoder(resp.Body).Decode(&status)
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
-		if decodeErr != nil {
-			t.Fatalf("failed to decode SystemStatus from %s: %v", endpoint, decodeErr)
-		}
+		t.Fatalf("GET /api/system-status status = %d, want 200; body=%s", resp.StatusCode, string(body))
+	}
 
-		if status.Hostname == "" {
-			t.Errorf("expected non-empty Hostname from live osquery")
-		}
-		if status.OS == "" {
-			t.Errorf("expected non-empty OS")
-		}
-		if status.Arch == "" {
-			t.Errorf("expected non-empty Arch")
-		}
-		if status.OSSkill != aida.OS() {
-			t.Errorf("OSSkill = %q, want %q", status.OSSkill, aida.OS())
-		}
-		if status.Kernel == "" {
-			t.Errorf("expected non-empty Kernel from live osquery")
-		}
-		if status.Uptime == "" {
-			t.Errorf("expected non-empty Uptime from live osquery")
-		}
-		if status.OsqueryVersion == "" {
-			t.Errorf("expected non-empty OsqueryVersion from live osquery")
-		}
-		if status.Model != aida.Model() {
-			t.Errorf("Model = %q, want %q", status.Model, aida.Model())
-		}
-		if status.ThinkingLevel != aida.ThinkingLevel() {
-			t.Errorf("ThinkingLevel = %q, want %q", status.ThinkingLevel, aida.ThinkingLevel())
-		}
-		if status.CPU < 0 || status.CPU > 100 {
-			t.Errorf("CPU = %v, want in [0, 100]", status.CPU)
-		}
-		if status.Memory <= 0 || status.Memory > 100 {
-			t.Errorf("Memory = %v, want in (0, 100]", status.Memory)
-		}
-		wantHealth := ComputeHealth(status.CPU, status.Memory)
-		if status.Health != wantHealth {
-			t.Errorf("Health = %q, want %q (cpu=%v, memory=%v)", status.Health, wantHealth, status.CPU, status.Memory)
-		}
+	// Verify legacy alias GET /api/status is not registered and returns 404
+	statusReq, err := http.NewRequest(http.MethodGet, ts.URL+"/api/status", nil)
+	if err != nil {
+		t.Fatalf("NewRequest GET /api/status failed: %v", err)
+	}
+	statusResp, err := http.DefaultClient.Do(statusReq)
+	if err != nil {
+		t.Fatalf("GET /api/status failed: %v", err)
+	}
+	_ = statusResp.Body.Close()
+	if statusResp.StatusCode != http.StatusNotFound {
+		t.Fatalf("GET /api/status status = %d, want 404", statusResp.StatusCode)
+	}
+
+	endpoint := "/api/system-status"
+
+	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != "http://localhost:5173" {
+		t.Errorf("GET %s Access-Control-Allow-Origin = %q, want %q", endpoint, got, "http://localhost:5173")
+	}
+	if got := resp.Header.Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Errorf("GET %s X-Content-Type-Options = %q, want %q", endpoint, got, "nosniff")
+	}
+	if got := resp.Header.Get("X-Frame-Options"); got != "DENY" {
+		t.Errorf("GET %s X-Frame-Options = %q, want %q", endpoint, got, "DENY")
+	}
+	if got := resp.Header.Get("Content-Security-Policy"); got != "frame-ancestors 'none'" {
+		t.Errorf("GET %s Content-Security-Policy = %q, want %q", endpoint, got, "frame-ancestors 'none'")
+	}
+
+	var status SystemStatus
+	decodeErr := json.NewDecoder(resp.Body).Decode(&status)
+	_ = resp.Body.Close()
+	if decodeErr != nil {
+		t.Fatalf("failed to decode SystemStatus from %s: %v", endpoint, decodeErr)
+	}
+
+	if status.Hostname == "" {
+		t.Errorf("expected non-empty Hostname from live osquery")
+	}
+	if status.OS == "" {
+		t.Errorf("expected non-empty OS")
+	}
+	if status.Arch == "" {
+		t.Errorf("expected non-empty Arch")
+	}
+	if status.OSSkill != aida.OS() {
+		t.Errorf("OSSkill = %q, want %q", status.OSSkill, aida.OS())
+	}
+	if status.Kernel == "" {
+		t.Errorf("expected non-empty Kernel from live osquery")
+	}
+	if status.Uptime == "" {
+		t.Errorf("expected non-empty Uptime from live osquery")
+	}
+	if status.OsqueryVersion == "" {
+		t.Errorf("expected non-empty OsqueryVersion from live osquery")
+	}
+	if status.Model != aida.Model() {
+		t.Errorf("Model = %q, want %q", status.Model, aida.Model())
+	}
+	if status.ThinkingLevel != aida.ThinkingLevel() {
+		t.Errorf("ThinkingLevel = %q, want %q", status.ThinkingLevel, aida.ThinkingLevel())
+	}
+	if status.CPU < 0 || status.CPU > 100 {
+		t.Errorf("CPU = %v, want in [0, 100]", status.CPU)
+	}
+	if status.Memory <= 0 || status.Memory > 100 {
+		t.Errorf("Memory = %v, want in (0, 100]", status.Memory)
+	}
+	wantHealth := ComputeHealth(status.CPU, status.Memory)
+	if status.Health != wantHealth {
+		t.Errorf("Health = %q, want %q (cpu=%v, memory=%v)", status.Health, wantHealth, status.CPU, status.Memory)
 	}
 }
 
@@ -167,13 +181,13 @@ func TestServer_CORSLoopbackAndRejection(t *testing.T) {
 
 	allowedOrigins := []string{
 		"http://localhost:5173",
-		"http://127.0.0.1:8090",
+		"http://127.0.0.1:8080",
 		"http://[::1]:5173",
 		"http://localhost",
 	}
 
 	for _, origin := range allowedOrigins {
-		for _, path := range []string{"/agents/aida", "/api/agents/aida", "/api/system-status"} {
+		for _, path := range []string{"/agents/aida", "/api/system-status"} {
 			req, err := http.NewRequest(http.MethodOptions, ts.URL+path, nil)
 			if err != nil {
 				t.Fatalf("NewRequest OPTIONS %s failed: %v", path, err)
@@ -203,7 +217,7 @@ func TestServer_CORSLoopbackAndRejection(t *testing.T) {
 	rejectedOrigins := []string{
 		"https://evil.example.com",
 		"http://evil.example.com",
-		"http://192.168.1.50:8090",
+		"http://192.168.1.50:8080",
 		"null",
 	}
 	for _, badOrigin := range rejectedOrigins {
@@ -337,20 +351,28 @@ func TestServer_AgentRoutesAndWebDir(t *testing.T) {
 	if !hasPrimary {
 		t.Errorf("expected srv.Routes() to include \"POST /agents/aida\", got %v", registered)
 	}
-	if !hasAlias {
-		t.Errorf("expected srv.Routes() to include \"POST /api/agents/aida\", got %v", registered)
+	if hasAlias {
+		t.Errorf("expected srv.Routes() to NOT include \"POST /api/agents/aida\", got %v", registered)
 	}
 
-	// Verify both POST /agents/aida and POST /api/agents/aida are routed to the Genkit handler
-	for _, routePath := range []string{"/agents/aida", "/api/agents/aida"} {
-		resp, err := http.Post(ts.URL+routePath, "application/json", strings.NewReader("{invalid-json"))
-		if err != nil {
-			t.Fatalf("POST %s failed: %v", routePath, err)
-		}
-		_ = resp.Body.Close()
-		if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
-			t.Errorf("POST %s returned %d; expected Genkit handler to be mounted and handle POST", routePath, resp.StatusCode)
-		}
+	// Verify POST /agents/aida is routed to Genkit handler
+	resp, err := http.Post(ts.URL+"/agents/aida", "application/json", strings.NewReader("{invalid-json"))
+	if err != nil {
+		t.Fatalf("POST /agents/aida failed: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
+		t.Errorf("POST /agents/aida returned %d; expected Genkit handler to be mounted and handle POST", resp.StatusCode)
+	}
+
+	// Verify POST /api/agents/aida returns 404
+	respAlias, err := http.Post(ts.URL+"/api/agents/aida", "application/json", strings.NewReader("{invalid-json"))
+	if err != nil {
+		t.Fatalf("POST /api/agents/aida failed: %v", err)
+	}
+	_ = respAlias.Body.Close()
+	if respAlias.StatusCode != http.StatusNotFound {
+		t.Errorf("POST /api/agents/aida returned %d, want 404", respAlias.StatusCode)
 	}
 }
 
@@ -431,7 +453,7 @@ func TestServer_FailFastAndHelpers(t *testing.T) {
 	}
 
 	// Non-loopback bind must be rejected when AllowRemote is false
-	for _, nonLoopback := range []string{":8090", "0.0.0.0:8090", "192.168.1.10:8090"} {
+	for _, nonLoopback := range []string{":8080", "0.0.0.0:8080", "192.168.1.10:8080"} {
 		err := srv.ListenAndServe(context.Background(), nonLoopback)
 		if err == nil || !strings.Contains(err.Error(), "refusing to bind to non-loopback address") {
 			t.Fatalf("expected ListenAndServe(%q) with AllowRemote=false to fail fast refusing non-loopback bind, got: %v", nonLoopback, err)
@@ -470,11 +492,11 @@ func TestServer_CPUSamplingAndOriginValidation(t *testing.T) {
 	// Origin validation checks
 	validOrigins := []string{
 		"http://127.0.0.1",
-		"http://127.0.0.1:8090",
+		"http://127.0.0.1:8080",
 		"http://localhost",
 		"http://localhost:5173",
 		"http://[::1]",
-		"http://[::1]:8090",
+		"http://[::1]:8080",
 	}
 	for _, o := range validOrigins {
 		if !isAllowedLoopbackOrigin(o) {

@@ -43,7 +43,6 @@ import type {
   DiagnosticLogEntry,
   QuickProbe,
   SecurityInterruptItem,
-  StylePresetId,
   SystemStatus,
   TargetDeployment,
   ThemeMode,
@@ -102,16 +101,6 @@ const QUICK_PROBES: QuickProbe[] = [
     prompt:
       'Check temporary directory usage or DNS resolver configuration, render a concise summary Panel, and invoke the runCommand tool with a safe diagnostic command (such as checking disk usage in /tmp or inspecting local DNS state) to trigger operator approval.',
   },
-  {
-    id: 'probe-self-controls',
-    title: 'AIDA Self-Controls & Style',
-    subtitle:
-      'Client-side tab navigation, theme/palette customizer, and avatar controls.',
-    badge: 'SELF-UI',
-    icon: 'tune',
-    prompt:
-      'Render a root Panel ("AIDA Self-Control Center") containing a CockpitControl component (mode="all", title="Navigation, Style & Avatar") so I can switch tabs, customize your color palette and font scale, and control your avatar directly on the client without model round-trips.',
-  },
 ];
 
 const PC98_SPRITES: AvatarState[] = [
@@ -124,15 +113,6 @@ const PC98_SPRITES: AvatarState[] = [
   'teehee',
 ];
 
-const VALID_PRESETS = new Set<StylePresetId>([
-  'pc98-cyan',
-  'amber-phosphor',
-  'emerald-matrix',
-  'crimson-alert',
-  'violet-synth',
-  'daylight-paper',
-]);
-
 function stripA2uiBlocks(raw: string): string {
   return raw.replace(/```a2ui[\s\S]*?(?:```|$)/gi, '').trim();
 }
@@ -141,14 +121,12 @@ function stripA2uiBlocks(raw: string): string {
 export class AidaCockpit extends LitElement {
   @state() private targetBaseUrl: string = '';
   @state() private deployments: TargetDeployment[] = [];
-  @state() private showAddTargetInput: boolean = false;
   @state() private newTargetUrl: string = '';
 
   @state() private systemStatus: SystemStatus | null = null;
   @state() private statusOfflineError: string | null = null;
 
   @state() private theme: ThemeMode = 'dark';
-  @state() private scanlines: boolean = true;
 
   @state() private baseAvatarMode: 'idle' | 'think' | 'talk' | 'error' | 'teehee' = 'idle';
   @state() private lcdOverrideSpeech: string = '';
@@ -178,13 +156,6 @@ export class AidaCockpit extends LitElement {
   private talkTimer?: number;
   private speechEndTimeoutId?: number;
 
-  private readonly onWindowSelfAction = (e: Event): void => {
-    const detail = (e as CustomEvent<{ name?: string; context?: Record<string, any> }>).detail;
-    if (detail && typeof detail.name === 'string') {
-      this.tryHandleClientSelfAction(detail.name, detail.context ?? {});
-    }
-  };
-
   private get currentAvatarSprite(): AvatarState {
     if (this.baseAvatarMode === 'error') return 'error';
     if (this.baseAvatarMode === 'teehee') return 'teehee';
@@ -208,7 +179,6 @@ export class AidaCockpit extends LitElement {
     this.initProcessor();
     this.initAgentClient();
     this.startAvatarTimers();
-    window.addEventListener('aida:self-action', this.onWindowSelfAction);
     void this.fetchSystemStatus();
     this.statusPollTimer = window.setInterval(() => {
       void this.fetchSystemStatus();
@@ -216,7 +186,6 @@ export class AidaCockpit extends LitElement {
   }
 
   public override disconnectedCallback(): void {
-    window.removeEventListener('aida:self-action', this.onWindowSelfAction);
     super.disconnectedCallback();
     if (this.statusPollTimer !== undefined) {
       window.clearInterval(this.statusPollTimer);
@@ -253,18 +222,16 @@ export class AidaCockpit extends LitElement {
     if (meta) {
       meta.setAttribute('content', mode === 'light' ? 'light' : 'dark');
     }
-    root.dataset.preset = mode === 'light' ? 'daylight-paper' : 'pc98-cyan';
   }
 
   private toggleTheme(): void {
-    this.resetStyle();
     this.applyTheme(this.theme === 'dark' ? 'light' : 'dark');
     this.addLog('INFO', `Switched display theme to ${this.theme.toUpperCase()}`);
   }
 
   private initDeployments(): void {
     const origin = window.location.origin;
-    const defaultLocal = 'http://localhost:8090';
+    const defaultLocal = 'http://localhost:8080';
     const list: TargetDeployment[] = [];
 
     if (window.location.port === '5173') {
@@ -473,7 +440,6 @@ export class AidaCockpit extends LitElement {
       ];
     }
     this.newTargetUrl = '';
-    this.showAddTargetInput = false;
     this.switchTargetDeployment(candidate);
   }
 
@@ -506,90 +472,6 @@ export class AidaCockpit extends LitElement {
       this.lcdSeverity = 'nominal';
       this.addLog('INFO', `Selected tab #${index + 1}`);
     }
-  }
-
-  private applyStyle(opts: {
-    theme?: ThemeMode;
-    preset?: StylePresetId;
-    accent?: string;
-    bgPanel?: string;
-    text?: string;
-    fontScale?: number;
-    scanlines?: boolean;
-  }): void {
-    const root = document.documentElement;
-    const rootStyle = root.style;
-
-    if (opts.preset && VALID_PRESETS.has(opts.preset)) {
-      const targetTheme: ThemeMode =
-        opts.preset === 'daylight-paper' ? 'light' : 'dark';
-      if (this.theme !== targetTheme) {
-        this.applyTheme(targetTheme);
-      }
-      root.dataset.preset = opts.preset;
-      this.addLog('INFO', `Applied style preset "${opts.preset}"`);
-    } else if (opts.theme) {
-      this.applyTheme(opts.theme);
-    }
-
-    if (opts.accent) {
-      rootStyle.setProperty('--aida-accent', opts.accent);
-      rootStyle.setProperty('--aida-border-bright', opts.accent);
-    }
-    if (opts.bgPanel) {
-      rootStyle.setProperty('--aida-bg-panel', opts.bgPanel);
-    }
-    if (opts.text) {
-      rootStyle.setProperty('--aida-text', opts.text);
-    }
-    if (opts.fontScale !== undefined && !Number.isNaN(opts.fontScale)) {
-      const clamped = Math.min(Math.max(opts.fontScale, 0.8), 1.35);
-      rootStyle.fontSize = `${Math.round(clamped * 100)}%`;
-    }
-    if (opts.scanlines !== undefined) {
-      this.scanlines = Boolean(opts.scanlines);
-      if (this.scanlines) {
-        root.removeAttribute('data-scanlines');
-      } else {
-        root.setAttribute('data-scanlines', 'off');
-      }
-    }
-    this.requestUpdate();
-  }
-
-  private resetStyle(): void {
-    const root = document.documentElement;
-    for (const prop of [
-      '--aida-accent',
-      '--aida-border-bright',
-      '--aida-bg-panel',
-      '--aida-text',
-      'font-size',
-    ]) {
-      root.style.removeProperty(prop);
-    }
-    root.removeAttribute('data-scanlines');
-    this.scanlines = true;
-    this.applyTheme(this.theme);
-    this.requestUpdate();
-  }
-
-  private setAvatar(opts: {
-    state?: 'idle' | 'think' | 'talk' | 'error' | 'teehee';
-    speech?: string;
-    statusText?: string;
-  }): void {
-    if (opts.state) {
-      this.setAvatarMode(opts.state);
-    }
-    if (opts.speech !== undefined) {
-      this.lcdOverrideSpeech = opts.speech;
-      this.pulseSpeakingAnimation();
-    }
-    if (opts.statusText !== undefined) {
-      this.lcdOperationText = opts.statusText;
-    }
-    this.addLog('INFO', `Updated AIDA avatar state (${this.baseAvatarMode})`);
   }
 
   private closeTurnTab(e: Event, index: number): void {
@@ -677,114 +559,12 @@ export class AidaCockpit extends LitElement {
     }
   }
 
-  private resolveTabIndex(ctx: Record<string, any>): number | undefined {
-    if (typeof ctx.tabIndex === 'number') return ctx.tabIndex;
-    if (typeof ctx.index === 'number') return ctx.index;
-    const raw = ctx.tab ?? ctx.tabNumber ?? ctx.match ?? ctx.query ?? ctx.label;
-    if (typeof raw === 'number') return raw - 1;
-    if (typeof raw === 'string') {
-      const q = raw.trim().toLowerCase();
-      if (!q || q === 'current') return this.activeTurnIndex;
-      if (/^\d+$/.test(q)) return Number(q) - 1;
-      if (q === 'top' || q === 'root' || q === 'overview' || q === 'first') return 0;
-      const found = this.turns.findIndex((t) =>
-        `${t.userPrompt} ${t.agentText}`.toLowerCase().includes(q)
-      );
-      if (found >= 0) return found;
-    }
-    return undefined;
-  }
-
-  private readonly clientActions: Record<string, (ctx: Record<string, any>) => void> = {
-    toggle_theme: () => this.toggleTheme(),
-    set_theme: (ctx) => {
-      const mode = String(ctx.theme ?? ctx.mode ?? 'toggle').toLowerCase();
-      if (mode === 'light' || mode === 'dark') {
-        this.resetStyle();
-        this.applyTheme(mode);
-      } else {
-        this.toggleTheme();
-      }
-    },
-    set_style: (ctx) =>
-      this.applyStyle({
-        theme: ctx.theme === 'light' || ctx.theme === 'dark' ? ctx.theme : undefined,
-        preset: typeof ctx.preset === 'string' ? (ctx.preset as StylePresetId) : undefined,
-        accent: typeof ctx.accent === 'string' ? ctx.accent : undefined,
-        bgPanel: typeof ctx.bgPanel === 'string' ? ctx.bgPanel : undefined,
-        text: typeof ctx.text === 'string' ? ctx.text : undefined,
-        fontScale: typeof ctx.fontScale === 'number' ? ctx.fontScale : undefined,
-        scanlines: typeof ctx.scanlines === 'boolean' ? ctx.scanlines : undefined,
-      }),
-    reset_style: () => this.resetStyle(),
-    set_font_scale: (ctx) =>
-      this.applyStyle({ fontScale: Number(ctx.fontScale ?? ctx.scale ?? ctx.value ?? 1) }),
-    toggle_scanlines: (ctx) =>
-      this.applyStyle({
-        scanlines: typeof ctx.scanlines === 'boolean' ? ctx.scanlines : !this.scanlines,
-      }),
-    set_avatar: (ctx) =>
-      this.setAvatar({
-        state:
-          ctx.state === 'idle' ||
-          ctx.state === 'think' ||
-          ctx.state === 'talk' ||
-          ctx.state === 'teehee' ||
-          ctx.state === 'error'
-            ? ctx.state
-            : undefined,
-        speech: typeof ctx.speech === 'string' ? ctx.speech : undefined,
-        statusText: typeof ctx.statusText === 'string' ? ctx.statusText : undefined,
-      }),
-    toggle_logs: (ctx) => {
-      this.showLogs = typeof ctx.open === 'boolean' ? ctx.open : !this.showLogs;
-    },
-    refresh_status: () => void this.fetchSystemStatus(),
-    reset_session: () => this.resetSession(),
-    nav_home: () => this.selectTab(-1),
-    nav_forward: () => this.selectTab(this.activeTurnIndex + 1),
-    nav_back: (ctx) => {
-      if (this.turns.length === 0) {
-        this.selectTab(-1);
-        return;
-      }
-      const resolved = ctx.tab !== undefined ? this.resolveTabIndex(ctx) : undefined;
-      this.selectTab(resolved ?? Math.max(0, this.activeTurnIndex - 1));
-    },
-    select_tab: (ctx) => {
-      const resolved = this.resolveTabIndex(ctx);
-      if (resolved !== undefined) this.selectTab(resolved);
-    },
-    close_tab: (ctx) => {
-      const idx = this.resolveTabIndex(ctx) ?? this.activeTurnIndex;
-      if (idx >= 0 && idx < this.turns.length) {
-        this.closeTurnTab(new Event('close'), idx);
-      }
-    },
-  };
-
-  private tryHandleClientSelfAction(
-    rawActionName: string,
-    ctx: Record<string, any>
-  ): boolean {
-    const stripped = rawActionName
-      .trim()
-      .replace(/^(?:aida|client|ui|self)[:._-]/i, '')
-      .toLowerCase();
-    const handler = this.clientActions[stripped];
-    if (!handler) return false;
-    handler(ctx);
-    return true;
+  private toggleLogs(): void {
+    this.showLogs = !this.showLogs;
   }
 
   private async handleSurfaceAction(action: ActionPayload): Promise<void> {
     const ctx = (action.context ?? {}) as Record<string, any>;
-
-    // Intercept client-side self-actions (navigation, style, theme, avatar, workspace)
-    // and execute them immediately in the browser without calling the LLM!
-    if (this.tryHandleClientSelfAction(action.name, ctx)) {
-      return;
-    }
 
     if (this.isStreaming) return;
 
@@ -1109,14 +889,7 @@ export class AidaCockpit extends LitElement {
         : healthRaw === 'WARNING'
           ? 'warning'
           : 'critical';
-    const healthLabel =
-      healthRaw === 'NOMINAL'
-        ? 'NOMINAL [OK]'
-        : healthRaw === 'WARNING'
-          ? 'WARNING [WARN]'
-          : healthRaw === 'CRITICAL'
-            ? 'CRITICAL [CRIT]'
-            : 'OFFLINE [ERR]';
+    const healthLabel = healthRaw;
 
     return html`
       <header class="cockpit-topbar">
@@ -1129,85 +902,92 @@ export class AidaCockpit extends LitElement {
         </div>
 
         <div class="header-controls">
-          <div class="target-selector-group">
-            <span class="target-label">HOST:</span>
-            <select
-              class="cyber-select"
-              aria-label="Target Deployment Selector"
-              .value=${this.targetBaseUrl}
-              @change=${this.handleTargetChange}
-            >
-              ${this.deployments.map(
-                (d) => html`
-                  <option value=${d.url} ?selected=${d.url === this.targetBaseUrl}>
-                    ${d.label}
-                  </option>
-                `
-              )}
-            </select>
-            <button
-              type="button"
-              class="cyber-btn accent"
-              @click=${() => {
-                this.showAddTargetInput = !this.showAddTargetInput;
-              }}
-            >
-              [+ HOST]
-            </button>
+          <button
+            type="button"
+            class="cyber-btn icon-btn"
+            popovertarget="host-popover"
+            aria-label="Configure Host Target"
+            title="Configure Host Target"
+          >
+            <span class="material-symbols-outlined">tune</span>
+          </button>
+
+          <div id="host-popover" popover="auto" class="host-popover">
+            <div class="host-popover-header">
+              <span class="host-popover-title">TARGET DEPLOYMENT</span>
+            </div>
+            <div class="host-popover-body">
+              <label class="host-popover-label" for="host-target-select">ACTIVE HOST:</label>
+              <select
+                id="host-target-select"
+                class="cyber-select"
+                aria-label="Target Deployment Selector"
+                .value=${this.targetBaseUrl}
+                @change=${this.handleTargetChange}
+              >
+                ${this.deployments.map(
+                  (d) => html`
+                    <option value=${d.url} ?selected=${d.url === this.targetBaseUrl}>
+                      ${d.label}
+                    </option>
+                  `
+                )}
+              </select>
+
+              <div class="host-popover-custom">
+                <input
+                  type="url"
+                  class="cyber-input-sm"
+                  aria-label="Remote target deployment URL"
+                  placeholder="http://host:8080"
+                  .value=${this.newTargetUrl}
+                  @input=${(e: Event) => {
+                    this.newTargetUrl = (e.target as HTMLInputElement).value;
+                  }}
+                  @keydown=${(e: KeyboardEvent) => {
+                    if (e.key === 'Enter') this.submitNewTarget();
+                  }}
+                />
+                <button
+                  type="button"
+                  class="cyber-btn nominal"
+                  @click=${this.submitNewTarget}
+                  aria-label="Connect to target"
+                >
+                  CONNECT
+                </button>
+              </div>
+            </div>
           </div>
 
-          ${this.showAddTargetInput
-            ? html`
-                <div class="target-add-inline">
-                  <input
-                    type="url"
-                    class="cyber-input-sm"
-                    aria-label="Remote target deployment URL"
-                    placeholder="http://host:8090"
-                    .value=${this.newTargetUrl}
-                    @input=${(e: Event) => {
-                      this.newTargetUrl = (e.target as HTMLInputElement).value;
-                    }}
-                    @keydown=${(e: KeyboardEvent) => {
-                      if (e.key === 'Enter') this.submitNewTarget();
-                    }}
-                  />
-                  <button
-                    type="button"
-                    class="cyber-btn nominal"
-                    @click=${this.submitNewTarget}
-                  >
-                    [CONNECT]
-                  </button>
-                </div>
-              `
-            : nothing}
-
           <button
             type="button"
-            class="cyber-btn accent"
-            @click=${this.toggleTheme}
-            title="Toggle Daylight / CRT Dark Mode"
+            class="cyber-btn icon-btn"
+            @click="${this.toggleTheme}"
+            aria-label="Toggle Theme"
+            title="Toggle Theme"
           >
-            ${this.theme === 'dark' ? '[☀ LIGHT]' : '[☾ DARK]'}
+            <span class="material-symbols-outlined">${this.theme === 'dark' ? 'light_mode' : 'dark_mode'}</span>
           </button>
 
           <button
             type="button"
-            class="cyber-btn"
-            @click=${() => {
-              this.showLogs = !this.showLogs;
-            }}
+            class="cyber-btn icon-btn ${this.showLogs ? 'active' : ''}"
+            @click="${this.toggleLogs}"
+            aria-label="Toggle Diagnostic Logs"
+            title="Toggle Diagnostic Logs"
           >
-            [LOGS (${this.logs.length})]
+            <span class="material-symbols-outlined">terminal</span>
           </button>
 
           <button
             type="button"
-            class="cyber-btn danger"
-            @click=${this.resetSession}
+            class="cyber-btn icon-btn danger"
+            @click="${this.resetSession}"
+            aria-label="Reset Session"
+            title="Reset Session"
           >
-            [RESET]
+            <span class="material-symbols-outlined">restart_alt</span>
           </button>
         </div>
       </header>
@@ -1358,11 +1138,12 @@ export class AidaCockpit extends LitElement {
           <code class="hitl-executed-cmd">${intr.command}</code>
           <button
             type="button"
-            class="cyber-btn"
+            class="cyber-btn icon-btn"
             @click=${() => this.dismissInterrupt(turn.id, intr.id)}
+            aria-label="Clear command notification"
             title="Clear command notification"
           >
-            [× CLEAR]
+            <span class="material-symbols-outlined">close</span>
           </button>
         </div>
       `;
@@ -1372,7 +1153,7 @@ export class AidaCockpit extends LitElement {
       <div class="hitl-interrupt-card pc98-frame">
         <div class="hitl-header">
           <span class="hitl-title">
-            [🚨 COMMAND APPROVAL REQUIRED]
+            🚨 COMMAND APPROVAL REQUIRED
           </span>
           <div style="display: inline-flex; align-items: center; gap: 8px;">
             <span class="hitl-risk-badge">RISK: ${intr.risk.toUpperCase()}</span>
@@ -1412,7 +1193,8 @@ export class AidaCockpit extends LitElement {
             ?disabled=${this.isStreaming}
             @click=${() => this.handleInterruptDecision(turn.id, intr, true)}
           >
-            [✓ APPROVE]
+            <span class="material-symbols-outlined" aria-hidden="true" style="font-size: 16px;">check</span>
+            APPROVE
           </button>
           <button
             type="button"
@@ -1420,7 +1202,8 @@ export class AidaCockpit extends LitElement {
             ?disabled=${this.isStreaming}
             @click=${() => this.handleInterruptDecision(turn.id, intr, false)}
           >
-            [✗ DENY]
+            <span class="material-symbols-outlined" aria-hidden="true" style="font-size: 16px;">close</span>
+            DENY
           </button>
         </div>
       </div>
@@ -1454,35 +1237,38 @@ export class AidaCockpit extends LitElement {
         <div class="nav-controls-left">
           <button
             type="button"
-            class="cyber-btn ${this.activeTurnIndex === -1 ? 'accent' : ''}"
+            class="cyber-btn icon-btn ${this.activeTurnIndex === -1 ? 'active' : ''}"
             @click=${() => {
               this.activeTurnIndex = -1;
             }}
-            title="Show Quick Probes"
+            aria-label="Diagnostic Views"
+            title="Diagnostic Views"
           >
-            [⌂ VIEWS]
+            <span class="material-symbols-outlined">grid_view</span>
           </button>
           <button
             type="button"
-            class="cyber-btn"
+            class="cyber-btn icon-btn"
             ?disabled=${!canBack}
             @click=${() => {
               if (this.activeTurnIndex > 0) this.activeTurnIndex--;
             }}
+            aria-label="Previous tab"
             title="Previous tab"
           >
-            [◀]
+            <span class="material-symbols-outlined">chevron_left</span>
           </button>
           <button
             type="button"
-            class="cyber-btn"
+            class="cyber-btn icon-btn"
             ?disabled=${!canForward}
             @click=${() => {
               if (this.activeTurnIndex < this.turns.length - 1) this.activeTurnIndex++;
             }}
+            aria-label="Next tab"
             title="Next tab"
           >
-            [▶]
+            <span class="material-symbols-outlined">chevron_right</span>
           </button>
         </div>
 
@@ -1624,13 +1410,15 @@ export class AidaCockpit extends LitElement {
               </div>
               <button
                 type="button"
-                class="cyber-btn danger"
+                class="cyber-btn icon-btn danger"
+                aria-label="Dismiss error"
+                title="Dismiss error"
                 @click=${() => {
                   this.criticalError = null;
                   if (!this.isStreaming) this.setAvatarMode('idle');
                 }}
               >
-                [DISMISS]
+                <span class="material-symbols-outlined">close</span>
               </button>
             </div>
           `
@@ -1683,9 +1471,11 @@ export class AidaCockpit extends LitElement {
         <button
           type="submit"
           class="cyber-btn accent"
+          aria-label="Run query"
           ?disabled=${this.isStreaming || !this.promptInput.trim()}
         >
-          ${this.isStreaming ? '[RUNNING...]' : '[RUN]'}
+          <span class="material-symbols-outlined" aria-hidden="true" style="font-size: 16px;">${this.isStreaming ? 'sync' : 'play_arrow'}</span>
+          ${this.isStreaming ? 'RUNNING...' : 'RUN'}
         </button>
       </form>
     `;

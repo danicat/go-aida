@@ -45,11 +45,6 @@ import {
   AidaActionButtonElement,
   AidaActionButtonSchema,
 } from "./AidaActionButton.js";
-import {
-  AidaCockpitControlApi,
-  AidaCockpitControlElement,
-  AidaCockpitControlSchema,
-} from "./AidaCockpitControl.js";
 
 export const AIDA_CATALOG_ID = "aida";
 
@@ -61,7 +56,6 @@ export const AIDA_COMPONENTS: LitComponentApi[] = [
   AidaDataMatrixApi,
   AidaTextBlockApi,
   AidaActionButtonApi,
-  AidaCockpitControlApi,
 ];
 
 export const aidaCatalog = new Catalog<LitComponentApi>(
@@ -95,7 +89,4 @@ export {
   AidaActionButtonApi,
   AidaActionButtonElement,
   AidaActionButtonSchema,
-  AidaCockpitControlApi,
-  AidaCockpitControlElement,
-  AidaCockpitControlSchema,
 };

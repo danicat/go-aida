@@ -25,14 +25,6 @@ export type AvatarState =
 
 export type ThemeMode = 'dark' | 'light';
 
-export type StylePresetId =
-  | 'pc98-cyan'
-  | 'amber-phosphor'
-  | 'emerald-matrix'
-  | 'crimson-alert'
-  | 'violet-synth'
-  | 'daylight-paper';
-
 export interface SystemStatus {
   hostname: string;
   os: string;

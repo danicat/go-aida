@@ -26,7 +26,7 @@ import (
 // Go backend and the Lit/Three.js frontend.
 const CatalogID = "aida"
 
-// AidaCatalog returns the standalone 8-component A2UI v0.9 catalog for the
+// AidaCatalog returns the standalone 7-component A2UI v0.9 catalog for the
 // AIDA Cyber-Diagnostic Cockpit. It intentionally excludes BasicCatalog()
 // components so the model emits only flat, schema-safe AIDA components.
 func AidaCatalog() *a2uix.Catalog {
@@ -65,13 +65,8 @@ func AidaCatalog() *a2uix.Catalog {
 			},
 			{
 				Name:        "ActionButton",
-				Description: "Button that dispatches a follow-up inspection, remediation, or client-side self-action.",
+				Description: "Button that dispatches a follow-up inspection or remediation command.",
 				Props:       "id: string (required); label: string (required); variant?: primary|default|danger; action: {event: {name: string, context?: object}} (required); weight?: number.",
-			},
-			{
-				Name:        "CockpitControl",
-				Description: "Client-side self-control deck for AIDA navigation/tabs, theme/palette/font scale customization, and avatar/workspace controls (executes in browser with zero model round-trip).",
-				Props:       "id: string (required); title?: string; subtitle?: string; mode?: all|navigation|style|avatar|workspace; applyStyle?: {theme?: dark|light, preset?: pc98-cyan|phosphor-green|amber-crt|crimson-ops|violet-magi|daylight-paper, accent?: string, bgPanel?: string, text?: string, fontScale?: number, scanlines?: boolean}; applyAvatar?: {state?: idle|think|talk|teehee|error, speech?: string, statusText?: string}; shortcuts?: Array<{label: string, action: string, target?: string|number}>; weight?: number.",
 			},
 		},
 	}

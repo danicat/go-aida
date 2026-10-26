@@ -17,6 +17,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"flag"
 	"os"
 	"path/filepath"
 	"strings"
@@ -127,14 +128,14 @@ func TestRun_WebServerFailFastAndLifecycle(t *testing.T) {
 	}
 
 	if err := run(ctx, cliConfig{
-		Addr:        ":8090",
+		Addr:        ":8080",
 		AllowRemote: false,
 		AssetsDir:   "assets",
 		WebDir:      webDir,
 		ProjectID:   "test-gcp-project",
 		Location:    "global",
 	}); err == nil || !strings.Contains(err.Error(), "refusing to bind to non-loopback address") {
-		t.Fatalf("expected run() to fail fast when binding to :8090 without AllowRemote, got: %v", err)
+		t.Fatalf("expected run() to fail fast when binding to :8080 without AllowRemote, got: %v", err)
 	}
 
 	srvCtx, srvCancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -150,5 +151,58 @@ func TestRun_WebServerFailFastAndLifecycle(t *testing.T) {
 		Stdout:    outWriter,
 	}); err != nil {
 		t.Fatalf("expected run() to start and shut down cleanly on context cancellation, got: %v", err)
+	}
+}
+
+func TestCLI_Flags_DefaultsAndRemoval(t *testing.T) {
+	fs := flag.NewFlagSet("go-aida", flag.ContinueOnError)
+	fs.SetOutput(bytes.NewBuffer(nil))
+	_ = setupFlags(fs)
+
+	// Verify -serve and -web flags were removed.
+	if fs.Lookup("serve") != nil {
+		t.Fatal("expected -serve flag to be removed, but it is defined")
+	}
+	if fs.Lookup("web") != nil {
+		t.Fatal("expected -web flag to be removed, but it is defined")
+	}
+
+	// Verify -addr defaults to 127.0.0.1:8080.
+	addrFlag := fs.Lookup("addr")
+	if addrFlag == nil {
+		t.Fatal("expected -addr flag to be defined")
+	}
+	if addrFlag.DefValue != "127.0.0.1:8080" {
+		t.Fatalf("expected -addr default to be %q, got %q", "127.0.0.1:8080", addrFlag.DefValue)
+	}
+
+	// Verify -prompt is defined and empty by default.
+	promptFlag := fs.Lookup("prompt")
+	if promptFlag == nil {
+		t.Fatal("expected -prompt flag to be defined")
+	}
+	if promptFlag.DefValue != "" {
+		t.Fatalf("expected -prompt default to be empty, got %q", promptFlag.DefValue)
+	}
+
+	// Verify that passing -web or -serve produces an unknown flag error.
+	if err := fs.Parse([]string{"-web"}); err == nil || !strings.Contains(err.Error(), "provided but not defined") {
+		t.Fatalf("expected parsing -web to fail with unknown flag error, got: %v", err)
+	}
+	if err := fs.Parse([]string{"-serve"}); err == nil || !strings.Contains(err.Error(), "provided but not defined") {
+		t.Fatalf("expected parsing -serve to fail with unknown flag error, got: %v", err)
+	}
+
+	// Verify valid flags parse correctly into cliConfig.
+	fs2 := flag.NewFlagSet("go-aida", flag.ContinueOnError)
+	cfg2 := setupFlags(fs2)
+	if err := fs2.Parse([]string{"-addr", "127.0.0.1:9090", "-prompt", "check disk space"}); err != nil {
+		t.Fatalf("failed to parse valid flags: %v", err)
+	}
+	if cfg2.Addr != "127.0.0.1:9090" {
+		t.Fatalf("expected cfg.Addr to be %q, got %q", "127.0.0.1:9090", cfg2.Addr)
+	}
+	if cfg2.Prompt != "check disk space" {
+		t.Fatalf("expected cfg.Prompt to be %q, got %q", "check disk space", cfg2.Prompt)
 	}
 }

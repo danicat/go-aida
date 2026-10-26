@@ -179,7 +179,6 @@ func TestAidaCatalogAndPromptDocumentation(t *testing.T) {
 		"DataMatrix",
 		"TextBlock",
 		"ActionButton",
-		"CockpitControl",
 	}
 	if len(cat.Components) != len(expectedComponents) {
 		t.Fatalf("len(cat.Components) = %d, want %d", len(cat.Components), len(expectedComponents))
@@ -440,7 +439,6 @@ func TestNewAgent_InitializationAndPromptRender(t *testing.T) {
 		"CyberChart",
 		"HudGauge",
 		"DataMatrix",
-		"CockpitControl",
 		"`path`, `directory`, `pid`, `uid`, `url`, `hostname`, `data_type`, `query`, `channel`, `key`",
 	} {
 		if !strings.Contains(sysText, expectedToken) {
@@ -512,7 +510,7 @@ func TestNewAgent_InitializationAndPromptRender(t *testing.T) {
 		}
 		return &ai.ModelResponse{
 			FinishReason: ai.FinishReasonStop,
-			Message:      ai.NewModelTextMessage("Telemetry nominal.\n```a2ui\n[\n  {\"createSurface\": {\"surfaceId\": \"SURFACE_ID\", \"catalogId\": \"aida\"}},\n  {\"updateComponents\": {\"surfaceId\": \"SURFACE_ID\", \"components\": [\n    {\"id\": \"root\", \"component\": \"Panel\", \"title\": \"TELEMETRY\", \"children\": [\"holo\", \"gauge\", \"ctrl\"]},\n    {\"id\": \"holo\", \"component\": \"Scene3D\", \"mode\": \"topology\", \"nodes\": [{\"id\": \"n1\", \"label\": \"kernel\", \"value\": 12}]},\n    {\"id\": \"gauge\", \"component\": \"HudGauge\", \"items\": [{\"label\": \"CPU\", \"value\": 12, \"unit\": \"%\"}]},\n    {\"id\": \"ctrl\", \"component\": \"CockpitControl\", \"mode\": \"all\", \"applyStyle\": {\"preset\": \"amber-crt\"}}\n  ]}}\n]\n```"),
+			Message:      ai.NewModelTextMessage("Telemetry nominal.\n```a2ui\n[\n  {\"createSurface\": {\"surfaceId\": \"SURFACE_ID\", \"catalogId\": \"aida\"}},\n  {\"updateComponents\": {\"surfaceId\": \"SURFACE_ID\", \"components\": [\n    {\"id\": \"root\", \"component\": \"Panel\", \"title\": \"TELEMETRY\", \"children\": [\"holo\", \"gauge\"]},\n    {\"id\": \"holo\", \"component\": \"Scene3D\", \"mode\": \"topology\", \"nodes\": [{\"id\": \"n1\", \"label\": \"kernel\", \"value\": 12}]},\n    {\"id\": \"gauge\", \"component\": \"HudGauge\", \"items\": [{\"label\": \"CPU\", \"value\": 12, \"unit\": \"%\"}]}\n  ]}}\n]\n```"),
 		}, nil
 	})
 

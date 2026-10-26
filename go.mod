@@ -2,7 +2,10 @@ module github.com/danicat/go-aida
 
 go 1.27
 
-require github.com/firebase/genkit/go v1.13.1
+require (
+	github.com/firebase/genkit/go v1.13.1
+	google.golang.org/genai v1.57.0
+)
 
 require (
 	cloud.google.com/go v0.120.0 // indirect
@@ -42,7 +45,6 @@ require (
 	golang.org/x/net v0.52.0 // indirect
 	golang.org/x/sys v0.42.0 // indirect
 	golang.org/x/text v0.36.0 // indirect
-	google.golang.org/genai v1.57.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250603155806-513f23925822 // indirect
 	google.golang.org/grpc v1.73.0 // indirect
 	google.golang.org/protobuf v1.36.6 // indirect

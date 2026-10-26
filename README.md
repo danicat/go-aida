@@ -2,7 +2,7 @@
 
 **AIDA** (`go-aida`) is an AI-powered host diagnostic and remediation agent built in Go with **[Genkit Go](https://genkit.dev)**. It serves as a reference implementation showcasing two core Genkit Go capabilities:
 
-1. **Generative UI with [A2UI v0.9](https://github.com/google/A2UI)** (`github.com/firebase/genkit/go/plugins/a2ui/exp` on the backend and `@genkit-ai/a2ui` + `@a2ui/lit` on the frontend), using a standalone 8-component `"aida"` catalog with strict server-side schema validation (`a2uix.ValidateStrict`).
+1. **Generative UI with [A2UI v0.9](https://github.com/google/A2UI)** (`github.com/firebase/genkit/go/plugins/a2ui/exp` on the backend and `@genkit-ai/a2ui` + `@a2ui/lit` on the frontend), using a standalone 7-component `"aida"` catalog with strict server-side schema validation (`a2uix.ValidateStrict`).
 2. **Human-in-the-Loop (HITL) Interruptible Tools** (`genkitx.DefineInterruptibleTool` and `tool.Interrupt`), allowing the agent to propose host remediation commands (`runCommand`), pause the turn until the human operator approves or denies the command in the Web Cockpit, and resume the session seamlessly.
 
 AIDA runs as a **single agent** (`prompts/aida.prompt`) with all tools exposed directly on the agent: `use_skill` (OS-specific `osquery` schemas for `darwin`, `linux`, and `windows`), `run_osquery` (read-only live SQL telemetry), `googleSearch` (external CVE & advisory lookup), and `runCommand` (HITL shell execution).
@@ -19,7 +19,7 @@ flowchart LR
         HITL["Human-in-the-Loop\nCommand Approval Card"]
     end
 
-    subgraph Server["go-aida HTTP & SSE Server (127.0.0.1:8090)"]
+    subgraph Server["go-aida HTTP & SSE Server (127.0.0.1:8080)"]
         Agent["Single AIDA Agent\n(prompts/aida.prompt · genkitx.DefinePromptAgent)"]
         Catalog["Standalone 'aida' A2UI v0.9 Catalog\n(a2uix.Surfaces · ValidateStrict)"]
         Skills["use_skill Middleware\n(skills/{darwin,linux,windows}/SKILL.md)"]
@@ -45,15 +45,14 @@ flowchart LR
    - All tools and middleware are attached directly to the single `aida` agent—no sub-agent routing or delegation overhead.
 
 2. **A2UI v0.9 Custom Catalog & Strict Validation ([`internal/agent/catalog.go`](internal/agent/catalog.go), [`web/src/aida-catalog/`](web/src/aida-catalog/))**:
-   - Registers a standalone 8-component `"aida"` catalog (`a2uix.LoadCatalog`) and validates every generated surface with `&a2uix.Surfaces{CatalogID: "aida", Instructions: a2uix.InstructionsNone, Validate: a2uix.ValidateStrict}` wrapped in `&middleware.Retry{MaxRetries: 3}`:
+   - Registers a standalone 7-component `"aida"` catalog (`a2uix.LoadCatalog`) and validates every generated surface with `&a2uix.Surfaces{CatalogID: "aida", Instructions: a2uix.InstructionsNone, Validate: a2uix.ValidateStrict}` wrapped in `&middleware.Retry{MaxRetries: 3}`:
      - `Panel`: Layout container card with title, subtitle, status LED (`nominal`, `warning`, `critical`), and flat child ID references.
      - `Scene3D`: Interactive Three.js 3D WebGL graph (`topology`, `cores`, `storage`, `threat_radar`) with clickable nodes.
      - `CyberChart`: Multi-mode SVG telemetry chart (`radar`, `radial`, `area`, `bar`, `donut`).
      - `HudGauge`: Arc, 20-segment plasma, and compact digital metric readouts.
      - `DataMatrix`: Sortable, filterable table for `osquery` rows with inline percentage bars and row drill-down actions.
      - `TextBlock`: Code, SQL, command output, or log viewer.
-     - `ActionButton`: Dispatches follow-up diagnostic prompts or zero-round-trip client self-actions (`aida:*`).
-     - `CockpitControl`: Client-side control deck that mutates theme presets, font scale, scanlines, tab navigation, or avatar mode directly in the browser without calling the model.
+     - `ActionButton`: Dispatches follow-up diagnostic prompts.
 
 3. **Human-in-the-Loop (HITL) Remediation ([`internal/agent/remediate.go`](internal/agent/remediate.go), [`web/src/aida-cockpit.ts`](web/src/aida-cockpit.ts))**:
    - Registers `runCommand` using `genkitx.DefineInterruptibleTool[CommandInput, CommandOutput, CommandConfirmation]`.
@@ -103,7 +102,7 @@ export GOOGLE_CLOUD_PROJECT="your-gcp-project-id"
 go run . -model vertexai/gemini-3.8-flash
 ```
 
-Open **`http://127.0.0.1:8090`** in your browser to launch the AIDA Web Cockpit.
+Open **`http://127.0.0.1:8080`** in your browser to launch the AIDA Web Cockpit.
 
 ### 3. Headless CLI One-Shot Mode
 
@@ -119,8 +118,8 @@ go run . -prompt "Inspect top 5 CPU processes and memory usage"
 
 | Flag | Default | Description |
 | :--- | :--- | :--- |
-| `-addr` | `127.0.0.1:8090` | HTTP listen address for the Web Cockpit server. |
-| `-allow-remote` | `false` | Allow binding `-addr` to non-loopback interfaces (e.g. `0.0.0.0:8090`). Use with caution. |
+| `-addr` | `127.0.0.1:8080` | HTTP listen address for the Web Cockpit server. |
+| `-allow-remote` | `false` | Allow binding `-addr` to non-loopback interfaces (e.g. `0.0.0.0:8080`). Use with caution. |
 | `-prompt` | `""` | Run a one-shot diagnostic prompt in headless CLI mode and exit. |
 | `-model` | `""` (auto-selected) | Genkit model identifier (`googleai/gemini-3.8-flash` or `vertexai/gemini-3.8-flash`). Defaults to `vertexai/gemini-3.8-flash` when a GCP project is configured, otherwise `googleai/gemini-3.8-flash`. |
 | `-project` | `$GOOGLE_CLOUD_PROJECT` | Google Cloud project ID for Vertex AI. |

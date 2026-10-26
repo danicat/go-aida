@@ -160,8 +160,19 @@ export class AidaTextBlockElement extends AidaCatalogElement<
         color: var(--aida-accent, #00f0ff);
         font-family: inherit;
         font-size: 0.64rem;
-        padding: 2px 7px;
+        width: 24px;
+        height: 24px;
+        padding: 0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
         cursor: pointer;
+      }
+
+      .copy-btn svg {
+        width: 14px;
+        height: 14px;
+        fill: currentColor;
       }
 
       .copy-btn:hover {
@@ -276,13 +287,13 @@ export class AidaTextBlockElement extends AidaCatalogElement<
             <button
               type="button"
               class="copy-btn"
+              aria-label=${this.copied ? "Copied to clipboard" : "Copy log output"}
+              title=${this.copyError ? `Copy error: ${this.copyError}` : this.copied ? "Copied to clipboard" : "Copy log output"}
               @click=${() => this.copyLogText(text)}
             >
-              ${this.copyError
-                ? `[COPY ERR: ${this.copyError}]`
-                : this.copied
-                  ? "[COPIED ✓]"
-                  : "[COPY]"}
+              ${this.copied
+                ? html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>`
+                : html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>`}
             </button>
           </div>
           <pre class="log-pre">${text}</pre>

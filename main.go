@@ -49,43 +49,32 @@ type cliConfig struct {
 	Stderr        io.Writer
 }
 
+func setupFlags(fs *flag.FlagSet) *cliConfig {
+	cfg := &cliConfig{
+		Stdout: os.Stdout,
+		Stderr: os.Stderr,
+	}
+	fs.StringVar(&cfg.Addr, "addr", server.DefaultAddr, "HTTP listen address for the AIDA Web Cockpit (loopback by default)")
+	fs.BoolVar(&cfg.AllowRemote, "allow-remote", false, "Allow binding the HTTP server to non-loopback network interfaces")
+	fs.StringVar(&cfg.Prompt, "prompt", "", "Execute a single diagnostic prompt in headless CLI mode and exit")
+	fs.StringVar(&cfg.Model, "model", "", "Model identifier (e.g. vertexai/gemini-3.8-flash or googleai/gemini-3.8-flash; overrides AIDA_MODEL)")
+	fs.StringVar(&cfg.ProjectID, "project", "", "Google Cloud Project ID for Vertex AI (overrides GOOGLE_CLOUD_PROJECT)")
+	fs.StringVar(&cfg.Location, "location", agent.DefaultLocation, "Google Cloud / Vertex AI location")
+	fs.StringVar(&cfg.AssetsDir, "assets", server.DefaultAssetsDir, "Directory containing static avatar assets")
+	fs.StringVar(&cfg.WebDir, "web-dir", server.DefaultWebDir, "Directory containing compiled frontend static assets")
+	fs.StringVar(&cfg.PromptsDir, "prompts", agent.DefaultPromptDir, "Directory containing Dotprompt (.prompt) files")
+	fs.StringVar(&cfg.SkillsDir, "skills", agent.DefaultSkillsDir, "Directory containing OS-specific osquery skill files")
+	return cfg
+}
+
 func main() {
-	addrFlag := flag.String("addr", server.DefaultAddr, "HTTP listen address for the AIDA Web Cockpit (loopback by default)")
-	allowRemoteFlag := flag.Bool("allow-remote", false, "Allow binding the HTTP server to non-loopback network interfaces")
-	promptFlag := flag.String("prompt", "", "Execute a single diagnostic prompt in headless CLI mode and exit")
-	modelFlag := flag.String("model", "", "Model identifier (e.g. vertexai/gemini-3.8-flash or googleai/gemini-3.8-flash; overrides AIDA_MODEL)")
-	projectFlag := flag.String("project", "", "Google Cloud Project ID for Vertex AI (overrides GOOGLE_CLOUD_PROJECT)")
-	locationFlag := flag.String("location", agent.DefaultLocation, "Google Cloud / Vertex AI location")
-	assetsFlag := flag.String("assets", server.DefaultAssetsDir, "Directory containing static avatar assets")
-	webDirFlag := flag.String("web-dir", server.DefaultWebDir, "Directory containing compiled frontend static assets")
-	promptsFlag := flag.String("prompts", agent.DefaultPromptDir, "Directory containing Dotprompt (.prompt) files")
-	skillsFlag := flag.String("skills", agent.DefaultSkillsDir, "Directory containing OS-specific osquery skill files")
-
-	// No-op boolean flags retained so scripts invoking -web or -serve do not fail flag parsing.
-	_ = flag.Bool("web", true, "Launch the AIDA Web Cockpit (default mode)")
-	_ = flag.Bool("serve", true, "Launch the AIDA Web Cockpit (alias for default mode)")
-
+	cfg := setupFlags(flag.CommandLine)
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	cfg := cliConfig{
-		Addr:        *addrFlag,
-		AllowRemote: *allowRemoteFlag,
-		Prompt:      *promptFlag,
-		Model:       *modelFlag,
-		ProjectID:   *projectFlag,
-		Location:    *locationFlag,
-		AssetsDir:   *assetsFlag,
-		WebDir:      *webDirFlag,
-		PromptsDir:  *promptsFlag,
-		SkillsDir:   *skillsFlag,
-		Stdout:      os.Stdout,
-		Stderr:      os.Stderr,
-	}
-
-	if err := run(ctx, cfg); err != nil {
+	if err := run(ctx, *cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "\n╔══════════════════════════════════════════════════════════════════════════════╗\n")
 		fmt.Fprintf(os.Stderr, "║ 🚨 AIDA FATAL STARTUP / EXECUTION ERROR (FAIL-FAST)                          ║\n")
 		fmt.Fprintf(os.Stderr, "╚══════════════════════════════════════════════════════════════════════════════╝\n")
