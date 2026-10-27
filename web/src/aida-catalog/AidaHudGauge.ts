@@ -33,8 +33,17 @@ export const AidaHudGaugeItemSchema = AidaCyberChartSeriesItemSchema;
 
 export const AidaHudGaugeSchema = z.object({
   title: CommonSchemas.DynamicString.optional(),
-  variant: z.enum(["arc", "plasma", "compact"]).default("arc").optional(),
-  items: z.array(AidaHudGaugeItemSchema),
+  variant: z
+    .enum(["arc", "plasma", "segmented", "compact"])
+    .default("arc")
+    .optional(),
+  label: z.string().optional(),
+  value: z.number().optional(),
+  max: z.number().optional(),
+  unit: z.string().optional(),
+  subtitle: z.string().optional(),
+  status: z.enum(["nominal", "warning", "critical"]).optional(),
+  items: z.array(AidaHudGaugeItemSchema).optional(),
   actionName: z.string().optional(),
   actionContext: z.record(z.string(), z.unknown()).optional(),
   action: AidaFlexibleActionSchema.optional(),
@@ -43,7 +52,7 @@ export const AidaHudGaugeSchema = z.object({
 
 export type AidaHudGaugeItem = z.infer<typeof AidaHudGaugeItemSchema>;
 export type AidaHudGaugeProps = z.infer<typeof AidaHudGaugeSchema>;
-type GaugeVariant = "arc" | "plasma" | "compact";
+type GaugeVariant = "arc" | "plasma" | "segmented" | "compact";
 
 @customElement("aida-hud-gauge")
 export class AidaHudGaugeElement extends AidaCatalogElement<
@@ -79,9 +88,26 @@ export class AidaHudGaugeElement extends AidaCatalogElement<
       return nothing;
     }
 
-    const items = Array.isArray(props.items) ? props.items : [];
-    const activeVariant: GaugeVariant =
+    const items: AidaHudGaugeItem[] =
+      Array.isArray(props.items) && props.items.length > 0
+        ? props.items
+        : props.value !== undefined || props.label !== undefined
+          ? [
+              {
+                label:
+                  props.label ?? (props.title ? String(props.title) : "Metric"),
+                value: props.value ?? 0,
+                max: props.max,
+                unit: props.unit,
+                subtitle: props.subtitle,
+                status: props.status,
+              },
+            ]
+          : [];
+    const rawVariant: GaugeVariant =
       this.overrideVariant ?? props.variant ?? "arc";
+    const activeVariant: GaugeVariant =
+      rawVariant === "segmented" ? "plasma" : rawVariant;
     const variants: GaugeVariant[] = ["arc", "plasma", "compact"];
     const onSelect = (item: AidaHudGaugeItem) => this.triggerGaugeDrillDown(item);
 
@@ -89,7 +115,11 @@ export class AidaHudGaugeElement extends AidaCatalogElement<
       <div class="gauge-container">
         <div class="gauge-header">
           <h4 class="gauge-title">
-            ${props.title ? String(props.title) : "Metrics"}
+            ${props.title
+              ? String(props.title)
+              : props.label
+                ? props.label
+                : "Metrics"}
           </h4>
           <div class="variant-switch" role="group" aria-label="Gauge Display Mode">
             ${variants.map(

@@ -1,9 +1,5 @@
 ---
-config:
-  thinkingConfig:
-    thinkingLevel: LOW
-  tools:
-    - googleSearch: {}
+description: AIDA — AI Diagnostic Agent
 input:
   schema:
     os: string
@@ -12,18 +8,19 @@ input:
 tools:
   - run_osquery
   - runCommand
+config:
+  thinkingConfig:
+    thinkingLevel: LOW
+  tools:
+    - googleSearch: {}
 use:
   - name: genkit-middleware/skills
     config:
       skillPaths:
-        - skills
-  - name: genkit-middleware/retry
-    config:
-      maxRetries: 3
+        - ./skills
   - name: a2ui
     config:
       catalogId: aida
-      instructions: none
       validate: strict
 ---
 {{role "system"}}
@@ -65,22 +62,6 @@ Keep prose outside the `a2ui` fenced code block to **1–2 plain sentences** sta
 4. **Click Actions**: Every visual element (`Scene3D` nodes, `CyberChart` series, `HudGauge` items, `DataMatrix` rows, and `ActionButton` controls) dispatches an action when clicked. When you receive a diagnostic surface action event, query `run_osquery` for that target (for example, open files, sockets, command line, or child processes for a PID) and return a focused A2UI surface.
 5. **Surface Lifecycle**: Start the array with `createSurface` (`"surfaceId": "SURFACE_ID"`, `"catalogId": "aida"`), followed by `updateComponents` (`"surfaceId": "SURFACE_ID"`, `"components": [...]`). Always use the literal string `"SURFACE_ID"`.
 6. **Catalog Components Only**: Use only `Panel`, `Scene3D`, `CyberChart`, `HudGauge`, `DataMatrix`, `TextBlock`, and `ActionButton`. Never emit `Card`, `Column`, `Row`, `Text`, `Button`, or `Table`.
-
-### Available "aida" Catalog Components
-- **Panel**: Layout container card with optional title, subtitle, status indicator, and child components.
-  Props: `id: string (required, use 'root' for top-level panel); title?: string; subtitle?: string; status?: nominal|warning|critical; direction?: column|row|grid; children: string[] of child component ids (required); weight?: number.`
-- **Scene3D**: Interactive 3D WebGL graph for process trees, socket connections, CPU cores, disk mounts, or CVE alerts.
-  Props: `id: string (required); title?: string; subtitle?: string; mode: topology|cores|storage|threat_radar (required); nodes: Array<{id: string, label: string, value: number, max?: number, unit?: string, status?: nominal|warning|critical, group?: string, actionName?: string, actionContext?: object}> (required); links?: Array<{source: string, target: string, label?: string, bandwidth?: number}>; weight?: number.`
-- **CyberChart**: Interactive SVG chart supporting bar, donut, area, radial, and radar views.
-  Props: `id: string (required); title: string (required); subtitle?: string; chartType: radar|radial|area|bar|donut (required); series: Array<{label: string, value: number, max?: number, unit?: string, status?: nominal|warning|critical}> (required); xAxisLabel?: string; yAxisLabel?: string; weight?: number.`
-- **HudGauge**: Metric gauges (arc, plasma, or compact) for CPU, memory, swap, disk, or load averages.
-  Props: `id: string (required); title?: string; variant?: arc|plasma|compact; items: Array<{label: string, value: number, max?: number, unit?: string, subtitle?: string, status?: nominal|warning|critical}> (required); weight?: number.`
-- **DataMatrix**: Sortable, filterable table for osquery rows with inline percentage bars and status badges.
-  Props: `id: string (required); title?: string; columns: Array<{key: string, label: string}> (required); rows: Array<Record<string, string|number|boolean|null>> (required); rowActionName?: string; weight?: number.`
-- **TextBlock**: Code, SQL, command output, or log block.
-  Props: `id: string (required); text: string (required); title?: string; variant?: heading|body|caption|callout|log; status?: nominal|warning|critical; weight?: number.`
-- **ActionButton**: Button that dispatches a follow-up inspection or remediation command.
-  Props: `id: string (required); label: string (required); variant?: primary|default|danger; action: {event: {name: string, context?: object}} (required); weight?: number.`
 
 ### Worked Example (`a2ui` fenced block)
 ```a2ui

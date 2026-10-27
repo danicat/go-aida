@@ -35,38 +35,38 @@ func AidaCatalog() *a2uix.Catalog {
 		Components: []a2uix.CatalogComponent{
 			{
 				Name:        "Panel",
-				Description: "Layout container card with optional title, subtitle, status indicator, and child components.",
-				Props:       "id: string (required, use 'root' for top-level panel); title?: string; subtitle?: string; status?: nominal|warning|critical; direction?: column|row|grid; children: string[] of child component ids (required); weight?: number.",
+				Description: "A framed HUD container that groups related components into rows, columns, or grids, complete with a status badge ('nominal', 'warning', or 'critical').",
+				Props:       "id: string (required, use 'root' for top-level panel); title?: string; subtitle?: string; status?: 'nominal' | 'warning' | 'critical'; direction?: 'column' | 'row' | 'grid'; children: string[] of child component ids (required); weight?: number.",
 			},
 			{
 				Name:        "Scene3D",
-				Description: "Interactive 3D WebGL graph for process trees, socket connections, CPU cores, disk mounts, or CVE alerts.",
-				Props:       "id: string (required); title?: string; subtitle?: string; mode: topology|cores|storage|threat_radar (required); nodes: Array<{id: string, label: string, value: number, max?: number, unit?: string, status?: nominal|warning|critical, group?: string, actionName?: string, actionContext?: object}> (required); links?: Array<{source: string, target: string, label?: string, bandwidth?: number}>; weight?: number.",
+				Description: "An interactive 3D wireframe canvas for visualising system topologies (process trees, CPU cores, storage mounts, or threat radar) with clickable nodes for drilling down.",
+				Props:       "id: string (required); title?: string; subtitle?: string; mode: 'topology' | 'cores' | 'storage' | 'threat_radar' (required); nodes: Array<{id: string, label: string, value: number, max?: number, unit?: string, status?: 'nominal' | 'warning' | 'critical', group?: string, actionName?: string, actionContext?: object}> (required); links?: Array<{source: string, target: string, label?: string, bandwidth?: number}>; weight?: number.",
 			},
 			{
 				Name:        "CyberChart",
-				Description: "Interactive SVG chart supporting bar, donut, area, radial, and radar views.",
-				Props:       "id: string (required); title: string (required); subtitle?: string; chartType: radar|radial|area|bar|donut (required); series: Array<{label: string, value: number, max?: number, unit?: string, status?: nominal|warning|critical}> (required); xAxisLabel?: string; yAxisLabel?: string; weight?: number.",
+				Description: "A multi-series chart (line, bar, area, scatter, radar, radial, or donut) for plotting metrics like CPU load, network throughput, and latency.",
+				Props:       "id: string (required); title: string (required); subtitle?: string; chartType: 'line' | 'bar' | 'area' | 'scatter' | 'radar' | 'radial' | 'donut' (required); series: Array<{label: string, value: number, max?: number, unit?: string, status?: 'nominal' | 'warning' | 'critical'}> (required); xAxisLabel?: string; yAxisLabel?: string; weight?: number.",
 			},
 			{
 				Name:        "HudGauge",
-				Description: "Metric gauges (arc, plasma, or compact) for CPU, memory, swap, disk, or load averages.",
-				Props:       "id: string (required); title?: string; variant?: arc|plasma|compact; items: Array<{label: string, value: number, max?: number, unit?: string, subtitle?: string, status?: nominal|warning|critical}> (required); weight?: number.",
+				Description: "A visual meter (circular arc, plasma bar, segmented bar, or compact) for capacity and percentage metrics.",
+				Props:       "id: string (required); title?: string; variant?: 'arc' | 'plasma' | 'segmented' | 'compact'; label?: string; value?: number; max?: number; unit?: string; status?: 'nominal' | 'warning' | 'critical'; items?: Array<{label: string, value: number, max?: number, unit?: string, subtitle?: string, status?: 'nominal' | 'warning' | 'critical'}>; weight?: number.",
 			},
 			{
 				Name:        "DataMatrix",
-				Description: "Sortable, filterable table for osquery rows with inline percentage bars and status badges.",
+				Description: "A filterable, sortable table for osquery results where clicking any row triggers a follow-up inspection on that item.",
 				Props:       "id: string (required); title?: string; columns: Array<{key: string, label: string}> (required); rows: Array<Record<string, string|number|boolean|null>> (required); rowActionName?: string; weight?: number.",
 			},
 			{
 				Name:        "TextBlock",
-				Description: "Code, SQL, command output, or log block.",
-				Props:       "id: string (required); text: string (required); title?: string; variant?: heading|body|caption|callout|log; status?: nominal|warning|critical; weight?: number.",
+				Description: "A monospaced diagnostic note for summaries, SQL queries, command output, and copyable snippets.",
+				Props:       "id: string (required); text: string (required); title?: string; variant?: 'heading' | 'body' | 'caption' | 'callout' | 'log'; status?: 'nominal' | 'warning' | 'critical'; weight?: number.",
 			},
 			{
 				Name:        "ActionButton",
-				Description: "Button that dispatches a follow-up inspection or remediation command.",
-				Props:       "id: string (required); label: string (required); variant?: primary|default|danger; action: {event: {name: string, context?: object}} (required); weight?: number.",
+				Description: "An interactive button that triggers a follow-up diagnostic or remediation action.",
+				Props:       "id: string (required); label: string (required); action: string | {event: {name: string, context?: object}} (required); variant?: 'primary' | 'warning' | 'danger' | 'default'; weight?: number.",
 			},
 		},
 	}

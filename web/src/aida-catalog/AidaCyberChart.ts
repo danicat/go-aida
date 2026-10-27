@@ -43,7 +43,7 @@ export const AidaCyberChartSchema = z.object({
   title: CommonSchemas.DynamicString,
   subtitle: CommonSchemas.DynamicString.optional(),
   chartType: z
-    .enum(["radar", "radial", "area", "bar", "donut"])
+    .enum(["line", "bar", "area", "scatter", "radar", "radial", "donut"])
     .default("radar"),
   series: z.array(AidaCyberChartSeriesItemSchema),
   xAxisLabel: CommonSchemas.DynamicString.optional(),
@@ -56,7 +56,14 @@ export const AidaCyberChartSchema = z.object({
 
 export type AidaCyberChartSeriesItem = z.infer<typeof AidaCyberChartSeriesItemSchema>;
 export type AidaCyberChartProps = z.infer<typeof AidaCyberChartSchema>;
-type ChartMode = "radar" | "radial" | "area" | "bar" | "donut";
+type ChartMode =
+  | "line"
+  | "bar"
+  | "area"
+  | "scatter"
+  | "radar"
+  | "radial"
+  | "donut";
 
 export function computeSeriesMax(series: AidaCyberChartSeriesItem[]): number {
   let maxVal = 0;
@@ -611,7 +618,8 @@ export class AidaCyberChartElement extends AidaCatalogElement<
   private renderAreaChart(
     series: AidaCyberChartSeriesItem[],
     globalMax: number,
-    props: AidaCyberChartProps
+    props: AidaCyberChartProps,
+    mode: "area" | "line" | "scatter" = "area"
   ) {
     const padL = 44;
     const padR = 24;
@@ -636,7 +644,7 @@ export class AidaCyberChartElement extends AidaCatalogElement<
       .map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`)
       .join(" ");
     const areaStr =
-      pts.length > 0
+      mode === "area" && pts.length > 0
         ? `${pts[0].x.toFixed(1)},${padT + plotH} ${polylineStr} ${pts[pts.length - 1].x.toFixed(1)},${padT + plotH}`
         : "";
 
@@ -686,7 +694,7 @@ export class AidaCyberChartElement extends AidaCatalogElement<
         ${areaStr
           ? svg`<polygon points=${areaStr} fill="url(#cyber-area-grad)" />`
           : nothing}
-        ${polylineStr
+        ${mode !== "scatter" && polylineStr
           ? svg`
               <polyline
                 points=${polylineStr}
@@ -722,7 +730,7 @@ export class AidaCyberChartElement extends AidaCatalogElement<
               <circle
                 cx=${p.x}
                 cy=${p.y}
-                r=${this.hoveredIndex === p.idx ? 6.5 : 4.2}
+                r=${this.hoveredIndex === p.idx ? 7 : mode === "scatter" ? 5.5 : 4.2}
                 fill=${resolveStatusColor(p.item.status, p.idx)}
                 stroke="var(--aida-bg-panel, #0a1026)"
                 stroke-width="1.5"
@@ -860,7 +868,15 @@ export class AidaCyberChartElement extends AidaCatalogElement<
     const activeType: ChartMode =
       this.overrideChartType ?? props.chartType ?? "radar";
     const globalMax = computeSeriesMax(series);
-    const modes: ChartMode[] = ["radar", "radial", "area", "bar", "donut"];
+    const modes: ChartMode[] = [
+      "line",
+      "bar",
+      "area",
+      "scatter",
+      "radar",
+      "radial",
+      "donut",
+    ];
 
     return html`
       <div class="chart-shell">
@@ -894,8 +910,10 @@ export class AidaCyberChartElement extends AidaCatalogElement<
             ? this.renderRadarChart(series, globalMax)
             : activeType === "radial"
               ? this.renderRadialChart(series, globalMax)
-              : activeType === "area"
-                ? this.renderAreaChart(series, globalMax, props)
+              : activeType === "area" ||
+                  activeType === "line" ||
+                  activeType === "scatter"
+                ? this.renderAreaChart(series, globalMax, props, activeType)
                 : activeType === "donut"
                   ? this.renderDonutChart(series)
                   : renderSegmentedBarMatrix(

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package agent
+package command
 
 import (
 	"bytes"
@@ -33,20 +33,20 @@ import (
 )
 
 const (
-	// CommandToolName is the canonical name of the human-in-the-loop remediation tool.
-	CommandToolName = "runCommand"
+	// ToolName is the canonical name of the human-in-the-loop shell execution tool.
+	ToolName = "runCommand"
 
-	// commandExecutionTimeout bounds any approved remediation shell command.
-	commandExecutionTimeout = 30 * time.Second
+	// executionTimeout bounds any approved shell command.
+	executionTimeout = 30 * time.Second
 
-	// commandWaitDelay bounds how long os/exec waits for child I/O pipes after exit/kill.
-	commandWaitDelay = 3 * time.Second
+	// waitDelay bounds how long os/exec waits for child I/O pipes after exit/kill.
+	waitDelay = 3 * time.Second
 
-	// maxCommandOutputBytes caps stdout and stderr buffers at 1 MiB.
-	maxCommandOutputBytes = 1 << 20
+	// maxOutputBytes caps stdout and stderr buffers at 1 MiB.
+	maxOutputBytes = 1 << 20
 )
 
-var allowedCommandEnvVars = []string{
+var allowedEnvVars = []string{
 	"PATH",
 	"HOME",
 	"USER",
@@ -64,15 +64,15 @@ var allowedCommandEnvVars = []string{
 
 // CommandInput defines the input schema for the interruptible runCommand tool.
 type CommandInput struct {
-	Command string `json:"command" jsonschema:"description=The exact shell command to execute for host remediation"`
-	Reason  string `json:"reason" jsonschema:"description=Why this remediation command is needed"`
+	Command string `json:"command" jsonschema:"description=The exact shell command to execute on the host"`
+	Reason  string `json:"reason" jsonschema:"description=Why this shell command is needed"`
 	Risk    string `json:"risk" jsonschema:"description=Risk level: LOW, MEDIUM, or HIGH"`
 }
 
 // CommandInterrupt is the structured interrupt metadata emitted when runCommand pauses for HITL approval.
 type CommandInterrupt struct {
 	Command string `json:"command" jsonschema:"description=The exact shell command awaiting human operator approval"`
-	Reason  string `json:"reason" jsonschema:"description=Why this remediation command is needed"`
+	Reason  string `json:"reason" jsonschema:"description=Why this command is needed"`
 	Risk    string `json:"risk" jsonschema:"description=Normalized risk level: LOW, MEDIUM, or HIGH"`
 }
 
@@ -89,40 +89,50 @@ type CommandOutput struct {
 	ExitCode int    `json:"exitCode" jsonschema:"description=Process exit code (0 on success, -1 when rejected)"`
 	Stdout   string `json:"stdout" jsonschema:"description=Captured standard output"`
 	Stderr   string `json:"stderr" jsonschema:"description=Captured standard error or operator feedback"`
+	Executed bool   `json:"executed" jsonschema:"description=True if the command was executed on the host"`
 }
 
-// RegisterCommandTool defines and registers the interruptible `runCommand` tool on the Genkit instance.
+// Type aliases for convenience.
+type (
+	Input        = CommandInput
+	Interrupt    = CommandInterrupt
+	Confirmation = CommandConfirmation
+	Output       = CommandOutput
+)
+
+// RegisterTool defines and registers the interruptible `runCommand` tool on the Genkit instance.
 // On initial invocation (`res == nil`), it always pauses execution via `tool.Interrupt(CommandInterrupt{...})`
 // so the human operator can inspect and approve or reject the command in the AIDA cockpit.
-func RegisterCommandTool(g *genkit.Genkit) *aix.InterruptibleTool[CommandInput, CommandOutput, CommandConfirmation] {
+func RegisterTool(g *genkit.Genkit) *aix.InterruptibleTool[CommandInput, CommandOutput, CommandConfirmation] {
 	return genkitx.DefineInterruptibleTool[CommandInput, CommandOutput, CommandConfirmation](
 		g,
-		CommandToolName,
-		"Execute a host remediation or diagnostic shell command after mandatory Human-in-the-Loop (HITL) operator approval.",
-		func(ctx context.Context, in CommandInput, res *CommandConfirmation) (CommandOutput, error) {
-			trimmedCmd := strings.TrimSpace(in.Command)
+		ToolName,
+		"Runs a shell command on the host with operator approval",
+		func(ctx context.Context, input CommandInput, res *CommandConfirmation) (CommandOutput, error) {
+			trimmedCmd := strings.TrimSpace(input.Command)
 			if trimmedCmd == "" {
 				return CommandOutput{}, status.Errorf(
 					status.ErrInvalidArgument,
 					"%s: command must not be empty",
-					CommandToolName,
+					ToolName,
 				)
 			}
 
-			trimmedReason := strings.TrimSpace(in.Reason)
+			trimmedReason := strings.TrimSpace(input.Reason)
 			if trimmedReason == "" {
 				return CommandOutput{}, status.Errorf(
 					status.ErrInvalidArgument,
 					"%s: reason must not be empty",
-					CommandToolName,
+					ToolName,
 				)
 			}
 
-			risk, err := normalizeRisk(in.Risk)
+			risk, err := normalizeRisk(input.Risk)
 			if err != nil {
 				return CommandOutput{}, err
 			}
 
+			// 1. First call: pause the turn and ask the operator for approval
 			if res == nil {
 				return CommandOutput{}, tool.Interrupt(CommandInterrupt{
 					Command: trimmedCmd,
@@ -131,20 +141,24 @@ func RegisterCommandTool(g *genkit.Genkit) *aix.InterruptibleTool[CommandInput, 
 				})
 			}
 
+			// 2. Resumed call: if denied, return structured feedback instead of an error
 			if !res.Approved {
 				feedback := strings.TrimSpace(res.Feedback)
-				if feedback == "" {
-					feedback = "Command execution rejected by human operator."
+				stderr := "Operator denied execution"
+				if feedback != "" {
+					stderr = fmt.Sprintf("Operator denied execution: %s", feedback)
 				}
 				return CommandOutput{
 					Command:  trimmedCmd,
 					Status:   "rejected",
 					ExitCode: -1,
 					Stdout:   "",
-					Stderr:   feedback,
+					Stderr:   stderr,
+					Executed: false,
 				}, nil
 			}
 
+			// 3. Approved: run the command with a 30-second timeout
 			return executeApprovedCommand(ctx, trimmedCmd)
 		},
 	)
@@ -152,10 +166,10 @@ func RegisterCommandTool(g *genkit.Genkit) *aix.InterruptibleTool[CommandInput, 
 
 func executeApprovedCommand(ctx context.Context, command string) (CommandOutput, error) {
 	if ctx == nil {
-		return CommandOutput{}, status.Errorf(status.ErrInvalidArgument, "%s: execution context is nil", CommandToolName)
+		return CommandOutput{}, status.Errorf(status.ErrInvalidArgument, "%s: execution context is nil", ToolName)
 	}
 
-	execCtx, cancel := context.WithTimeout(ctx, commandExecutionTimeout)
+	execCtx, cancel := context.WithTimeout(ctx, executionTimeout)
 	defer cancel()
 
 	var cmd *exec.Cmd
@@ -165,21 +179,21 @@ func executeApprovedCommand(ctx context.Context, command string) (CommandOutput,
 		cmd = exec.CommandContext(execCtx, "sh", "-c", command)
 	}
 
-	stdout := &limitedOutputBuffer{maxBytes: maxCommandOutputBytes}
-	stderr := &limitedOutputBuffer{maxBytes: maxCommandOutputBytes}
+	stdout := &limitedOutputBuffer{maxBytes: maxOutputBytes}
+	stderr := &limitedOutputBuffer{maxBytes: maxOutputBytes}
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	cmd.Env = sanitizedCommandEnv()
-	cmd.WaitDelay = commandWaitDelay
+	cmd.WaitDelay = waitDelay
 
 	runErr := cmd.Run()
 	if stdout.exceeded || stderr.exceeded {
 		return CommandOutput{}, status.Errorf(
 			status.ErrResourceExhausted,
 			"%s: command %q output exceeded %d-byte buffer limit",
-			CommandToolName,
+			ToolName,
 			command,
-			maxCommandOutputBytes,
+			maxOutputBytes,
 		)
 	}
 
@@ -191,9 +205,9 @@ func executeApprovedCommand(ctx context.Context, command string) (CommandOutput,
 			return CommandOutput{}, status.Errorf(
 				status.ErrDeadlineExceeded,
 				"%s: command %q timed out after %s (stdout=%q, stderr=%q)",
-				CommandToolName,
+				ToolName,
 				command,
-				commandExecutionTimeout,
+				executionTimeout,
 				outStr,
 				errStr,
 			)
@@ -208,12 +222,13 @@ func executeApprovedCommand(ctx context.Context, command string) (CommandOutput,
 				ExitCode: exitErr.ExitCode(),
 				Stdout:   outStr,
 				Stderr:   errStr,
+				Executed: true,
 			}, nil
 		}
 		return CommandOutput{}, status.Errorf(
 			status.ErrInternal,
 			"%s: failed to execute command %q (stderr=%q): %w",
-			CommandToolName,
+			ToolName,
 			command,
 			errStr,
 			runErr,
@@ -226,6 +241,7 @@ func executeApprovedCommand(ctx context.Context, command string) (CommandOutput,
 		ExitCode: 0,
 		Stdout:   outStr,
 		Stderr:   errStr,
+		Executed: true,
 	}, nil
 }
 
@@ -241,15 +257,15 @@ func normalizeRisk(risk string) (string, error) {
 		return "", status.Errorf(
 			status.ErrInvalidArgument,
 			"%s: invalid risk %q (must be LOW, MEDIUM, or HIGH)",
-			CommandToolName,
+			ToolName,
 			risk,
 		)
 	}
 }
 
 func sanitizedCommandEnv() []string {
-	env := make([]string, 0, len(allowedCommandEnvVars))
-	for _, key := range allowedCommandEnvVars {
+	env := make([]string, 0, len(allowedEnvVars))
+	for _, key := range allowedEnvVars {
 		if val, ok := os.LookupEnv(key); ok {
 			env = append(env, key+"="+val)
 		}

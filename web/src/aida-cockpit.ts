@@ -130,6 +130,8 @@ export class AidaCockpit extends LitElement {
 
   @state() private baseAvatarMode: 'idle' | 'think' | 'talk' | 'error' | 'teehee' = 'idle';
   @state() private lcdOverrideSpeech: string = '';
+  @state() private displayedSpeech: string = '';
+  @state() private isTypingSpeech: boolean = false;
   @state() private isMouthOpen: boolean = false;
   @state() private isBlinking: boolean = false;
 
@@ -150,11 +152,13 @@ export class AidaCockpit extends LitElement {
   private chat!: AgentChat<any>;
   private processor!: MessageProcessor<LitComponentApi>;
 
+  private targetSpeech: string = '';
+  private speechTurnId: string = '';
   private statusPollTimer?: number;
   private blinkTimeoutId?: number;
   private blinkEndTimeoutId?: number;
   private talkTimer?: number;
-  private speechEndTimeoutId?: number;
+  private typewriterTimer?: number;
 
   private get currentAvatarSprite(): AvatarState {
     if (this.baseAvatarMode === 'error') return 'error';
@@ -179,6 +183,11 @@ export class AidaCockpit extends LitElement {
     this.initProcessor();
     this.initAgentClient();
     this.startAvatarTimers();
+    this.enqueueSpeech(
+      '__greeting__',
+      'Select a diagnostic view below or enter a query.',
+      true
+    );
     void this.fetchSystemStatus();
     this.statusPollTimer = window.setInterval(() => {
       void this.fetchSystemStatus();
@@ -199,8 +208,8 @@ export class AidaCockpit extends LitElement {
     if (this.talkTimer !== undefined) {
       window.clearInterval(this.talkTimer);
     }
-    if (this.speechEndTimeoutId !== undefined) {
-      window.clearTimeout(this.speechEndTimeoutId);
+    if (this.typewriterTimer !== undefined) {
+      window.clearInterval(this.typewriterTimer);
     }
     this.processor?.dispose();
   }
@@ -301,21 +310,17 @@ export class AidaCockpit extends LitElement {
   private startAvatarTimers(): void {
     this.scheduleNextBlink();
 
-    // Exact AIDA v1 talking loop: 150ms interval alternating strictly between 'talk' and 'idle'
+    // PC-98 visual-novel talking loop: 240ms interval (~4.1 Hz) alternating between 'talk' and 'idle'
     this.talkTimer = window.setInterval(() => {
       if (this.baseAvatarMode === 'talk') {
         this.isMouthOpen = !this.isMouthOpen;
       } else if (this.isMouthOpen) {
         this.isMouthOpen = false;
       }
-    }, 150);
+    }, 240);
   }
 
   private setAvatarMode(mode: 'idle' | 'think' | 'talk' | 'error' | 'teehee'): void {
-    if (mode !== 'talk' && this.speechEndTimeoutId !== undefined) {
-      window.clearTimeout(this.speechEndTimeoutId);
-      this.speechEndTimeoutId = undefined;
-    }
     if (this.baseAvatarMode === mode) return;
     this.baseAvatarMode = mode;
     if (mode === 'talk') {
@@ -329,22 +334,83 @@ export class AidaCockpit extends LitElement {
     }
   }
 
-  /**
-   * Pulses the 'talk' animation ONLY while spoken prose chunks are actively arriving.
-   * Automatically stops talking after 450ms of silence (e.g. when the model moves on
-   * to rendering A2UI components or running tools).
-   */
-  private pulseSpeakingAnimation(): void {
-    this.setAvatarMode('talk');
-    if (this.speechEndTimeoutId !== undefined) {
-      window.clearTimeout(this.speechEndTimeoutId);
+  private stopTypewriter(): void {
+    if (this.typewriterTimer !== undefined) {
+      window.clearInterval(this.typewriterTimer);
+      this.typewriterTimer = undefined;
     }
-    this.speechEndTimeoutId = window.setTimeout(() => {
-      this.speechEndTimeoutId = undefined;
-      if (this.baseAvatarMode === 'talk') {
-        this.setAvatarMode(this.isStreaming ? 'think' : 'idle');
+    this.isTypingSpeech = false;
+  }
+
+  /**
+   * Queues spoken text into the PC-98 speech bubble. When `animate` is true, reveals characters
+   * progressively via a typewriter interval and drives AIDA's 'talk' mouth animation until
+   * the entire utterance has been spoken on screen.
+   */
+  private enqueueSpeech(turnId: string, fullText: string, animate = true): void {
+    const trimmed = fullText.trim();
+    if (!animate) {
+      this.stopTypewriter();
+      this.speechTurnId = turnId;
+      this.targetSpeech = trimmed;
+      this.displayedSpeech = trimmed;
+      return;
+    }
+
+    if (
+      turnId !== this.speechTurnId ||
+      !trimmed.startsWith(this.displayedSpeech.slice(0, Math.min(12, this.displayedSpeech.length)))
+    ) {
+      this.displayedSpeech = '';
+    }
+
+    this.speechTurnId = turnId;
+    this.targetSpeech = trimmed;
+
+    if (this.displayedSpeech.length < this.targetSpeech.length) {
+      this.isTypingSpeech = true;
+      if (this.baseAvatarMode !== 'error') {
+        this.setAvatarMode('talk');
       }
-    }, 450);
+      if (this.typewriterTimer === undefined) {
+        this.typewriterTimer = window.setInterval(() => {
+          this.stepTypewriter();
+        }, 30);
+      }
+    }
+  }
+
+  private stepTypewriter(): void {
+    if (this.displayedSpeech.length < this.targetSpeech.length) {
+      const remaining = this.targetSpeech.length - this.displayedSpeech.length;
+      const step = remaining > 180 ? 2 : 1;
+      const nextLen = Math.min(this.targetSpeech.length, this.displayedSpeech.length + step);
+      this.displayedSpeech = this.targetSpeech.slice(0, nextLen);
+
+      if (this.baseAvatarMode !== 'error' && this.baseAvatarMode !== 'talk') {
+        this.setAvatarMode('talk');
+      }
+
+      const speechEl = this.querySelector<HTMLElement>('.lcd-speech');
+      if (speechEl) {
+        speechEl.scrollTop = speechEl.scrollHeight;
+      }
+    } else {
+      this.stopTypewriter();
+      if (this.criticalError) {
+        this.setAvatarMode('error');
+      } else {
+        const activeTurn =
+          this.activeTurnIndex >= 0 && this.activeTurnIndex < this.turns.length
+            ? this.turns[this.activeTurnIndex]
+            : null;
+        if (this.isStreaming || activeTurn?.status === 'awaiting_approval') {
+          this.setAvatarMode('think');
+        } else {
+          this.setAvatarMode('idle');
+        }
+      }
+    }
   }
 
   private handleAvatarClick(): void {
@@ -452,9 +518,9 @@ export class AidaCockpit extends LitElement {
     this.criticalError = null;
     this.isStreaming = false;
     this.lcdOverrideSpeech = '';
-    this.setAvatarMode('idle');
     this.lcdOperationText = 'READY';
     this.lcdSeverity = 'nominal';
+    this.enqueueSpeech('__greeting__', 'Select a diagnostic view below or enter a query.', true);
     this.addLog('INFO', 'Cleared all A2UI surfaces and initialized fresh session.');
   }
 
@@ -463,6 +529,7 @@ export class AidaCockpit extends LitElement {
       this.activeTurnIndex = -1;
       this.lcdOperationText = 'READY';
       this.lcdSeverity = 'nominal';
+      this.enqueueSpeech('__greeting__', 'Select a diagnostic view below or enter a query.', false);
       this.addLog('INFO', 'Navigated to Home launcher');
       return;
     }
@@ -470,6 +537,7 @@ export class AidaCockpit extends LitElement {
       this.activeTurnIndex = index;
       this.lcdOperationText = 'READY';
       this.lcdSeverity = 'nominal';
+      this.enqueueSpeech(this.turns[index].id, this.turns[index].agentText || '', false);
       this.addLog('INFO', `Selected tab #${index + 1}`);
     }
   }
@@ -488,10 +556,17 @@ export class AidaCockpit extends LitElement {
 
     if (nextTurns.length === 0) {
       this.activeTurnIndex = -1;
-    } else if (index < this.activeTurnIndex) {
-      this.activeTurnIndex--;
-    } else if (index === this.activeTurnIndex) {
-      this.activeTurnIndex = Math.min(this.activeTurnIndex, nextTurns.length - 1);
+      this.enqueueSpeech('__greeting__', 'Select a diagnostic view below or enter a query.', false);
+    } else {
+      if (index < this.activeTurnIndex) {
+        this.activeTurnIndex--;
+      } else if (index === this.activeTurnIndex) {
+        this.activeTurnIndex = Math.min(this.activeTurnIndex, nextTurns.length - 1);
+      }
+      const nextActive = nextTurns[this.activeTurnIndex];
+      if (nextActive) {
+        this.enqueueSpeech(nextActive.id, nextActive.agentText || '', false);
+      }
     }
     this.surfaceTick++;
   }
@@ -637,6 +712,10 @@ export class AidaCockpit extends LitElement {
 
     this.criticalError = null;
     this.lcdOverrideSpeech = '';
+    this.stopTypewriter();
+    this.displayedSpeech = '';
+    this.targetSpeech = '';
+    this.speechTurnId = turnId;
     this.isStreaming = true;
     this.setAvatarMode('think');
     this.lcdOperationText = `QUERYING: ${displayPrompt}`;
@@ -692,6 +771,10 @@ export class AidaCockpit extends LitElement {
 
     this.isStreaming = true;
     this.criticalError = null;
+    this.stopTypewriter();
+    this.displayedSpeech = '';
+    this.targetSpeech = '';
+    this.speechTurnId = turnId;
     this.setAvatarMode('think');
     this.lcdOperationText = approved
       ? `RUNNING COMMAND: ${interruptItem.command}`
@@ -724,14 +807,15 @@ export class AidaCockpit extends LitElement {
   ): Promise<void> {
     const processedEnvelopeKeys = new Set<string>();
     let rawTextBuffer = '';
-    let enteredA2uiFence = false;
 
     try {
       for await (const chunk of turn.stream) {
         if (chunk.toolRequests && chunk.toolRequests.length > 0) {
           for (const tr of chunk.toolRequests) {
             const toolName = tr.toolRequest.name;
-            this.setAvatarMode('think');
+            if (!this.isTypingSpeech) {
+              this.setAvatarMode('think');
+            }
             this.lcdOperationText = `EXECUTING: ${toolName}`;
             this.lcdSeverity = 'warning';
             this.addLog(
@@ -749,27 +833,21 @@ export class AidaCockpit extends LitElement {
 
         if (chunk.text) {
           rawTextBuffer += chunk.text;
-          if (/```a2ui/i.test(rawTextBuffer)) {
-            enteredA2uiFence = true;
-          }
           const cleanSpoken = stripA2uiBlocks(rawTextBuffer);
           this.turns = this.turns.map((t) =>
             t.id === turnId ? { ...t, agentText: cleanSpoken } : t
           );
 
-          // Only animate AIDA's mouth while she is actively streaming spoken prose,
-          // NOT when she is generating A2UI component JSON.
-          if (!enteredA2uiFence && chunk.text.trim().length > 0) {
-            this.pulseSpeakingAnimation();
-          } else if (enteredA2uiFence) {
-            this.setAvatarMode('think');
+          if (cleanSpoken.length > 0) {
+            this.enqueueSpeech(turnId, cleanSpoken, true);
           }
         }
 
         const envelopes = a2uiEnvelopesFromParts(chunk.raw.modelChunk?.content);
         if (envelopes.length > 0) {
-          // Rendering A2UI components is NOT speaking — switch out of 'talk'
-          this.setAvatarMode('think');
+          if (!this.isTypingSpeech) {
+            this.setAvatarMode('think');
+          }
           this.clearResolvedInterrupts(turnId);
           this.ingestEnvelopes(envelopes, turnId, processedEnvelopeKeys);
         }
@@ -779,7 +857,9 @@ export class AidaCockpit extends LitElement {
 
       const finalEnvelopes = a2uiEnvelopesFromParts(res.message?.content);
       if (finalEnvelopes.length > 0) {
-        this.setAvatarMode('think');
+        if (!this.isTypingSpeech) {
+          this.setAvatarMode('think');
+        }
         this.clearResolvedInterrupts(turnId);
         this.ingestEnvelopes(finalEnvelopes, turnId, processedEnvelopeKeys);
       }
@@ -789,6 +869,9 @@ export class AidaCockpit extends LitElement {
         this.turns = this.turns.map((t) =>
           t.id === turnId && !t.agentText ? { ...t, agentText: cleanFinal } : t
         );
+        if (cleanFinal.length > 0) {
+          this.enqueueSpeech(turnId, cleanFinal, true);
+        }
       }
 
       const turnIndex = this.turns.findIndex((t) => t.id === turnId);
@@ -835,7 +918,9 @@ export class AidaCockpit extends LitElement {
               }
             : t
         );
-        this.setAvatarMode('think');
+        if (!this.isTypingSpeech) {
+          this.setAvatarMode('think');
+        }
         this.lcdOperationText = 'APPROVAL REQUIRED: runCommand';
         this.lcdSeverity = 'critical';
         this.addLog(
@@ -853,7 +938,9 @@ export class AidaCockpit extends LitElement {
               }
             : t
         );
-        this.setAvatarMode('idle');
+        if (!this.isTypingSpeech) {
+          this.setAvatarMode('idle');
+        }
         this.lcdOperationText = 'READY';
         this.lcdSeverity = 'nominal';
       }
@@ -1068,10 +1155,12 @@ export class AidaCockpit extends LitElement {
   private renderOperatorConsole(activeTurn: ChatTurn | null) {
     const spokenText =
       this.lcdOverrideSpeech ||
-      activeTurn?.agentText?.trim() ||
+      this.displayedSpeech ||
       (this.isStreaming
         ? 'Running host queries...'
-        : 'Select a diagnostic view below or enter a query.');
+        : activeTurn?.agentText?.trim() || 'Select a diagnostic view below or enter a query.');
+
+    const showCursor = this.isTypingSpeech || (this.isStreaming && !this.displayedSpeech);
 
     return html`
       <section class="operator-console" aria-label="AIDA Conversation Console">
@@ -1093,7 +1182,9 @@ export class AidaCockpit extends LitElement {
               : nothing}
           </div>
           <div class="lcd-speech">
-            ${spokenText}
+            ${spokenText}${showCursor
+              ? html`<span class="speech-cursor" aria-hidden="true"></span>`
+              : nothing}
           </div>
         </div>
       </section>
@@ -1239,7 +1330,7 @@ export class AidaCockpit extends LitElement {
             type="button"
             class="cyber-btn icon-btn ${this.activeTurnIndex === -1 ? 'active' : ''}"
             @click=${() => {
-              this.activeTurnIndex = -1;
+              this.selectTab(-1);
             }}
             aria-label="Diagnostic Views"
             title="Diagnostic Views"
@@ -1251,7 +1342,7 @@ export class AidaCockpit extends LitElement {
             class="cyber-btn icon-btn"
             ?disabled=${!canBack}
             @click=${() => {
-              if (this.activeTurnIndex > 0) this.activeTurnIndex--;
+              if (this.activeTurnIndex > 0) this.selectTab(this.activeTurnIndex - 1);
             }}
             aria-label="Previous tab"
             title="Previous tab"
@@ -1263,7 +1354,9 @@ export class AidaCockpit extends LitElement {
             class="cyber-btn icon-btn"
             ?disabled=${!canForward}
             @click=${() => {
-              if (this.activeTurnIndex < this.turns.length - 1) this.activeTurnIndex++;
+              if (this.activeTurnIndex < this.turns.length - 1) {
+                this.selectTab(this.activeTurnIndex + 1);
+              }
             }}
             aria-label="Next tab"
             title="Next tab"

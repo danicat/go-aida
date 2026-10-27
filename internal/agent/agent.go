@@ -38,6 +38,7 @@ import (
 	"github.com/firebase/genkit/go/plugins/googlegenai"
 	"github.com/firebase/genkit/go/plugins/middleware"
 
+	"github.com/danicat/go-aida/internal/command"
 	"github.com/danicat/go-aida/internal/osquery"
 )
 
@@ -317,25 +318,25 @@ func New(ctx context.Context, cfg Config) (*AIDA, error) {
 			),
 		)
 
-		if _, regErr := RegisterCatalog(initGenkit); regErr != nil {
-			return regErr
+		// 1. Register the custom "aida" A2UI component catalog
+		if regErr := a2uix.LoadCatalog(initGenkit, AidaCatalog()); regErr != nil {
+			return fmt.Errorf("failed to register aida A2UI catalog %q: %w", CatalogID, regErr)
 		}
 
+		// 2. Register read-only diagnostics (osquery) and HITL shell commands (command)
 		if _, regErr := osquery.RegisterTool(initGenkit, runner); regErr != nil {
 			return regErr
 		}
 
-		if commandTool := RegisterCommandTool(initGenkit); commandTool == nil {
+		if commandTool := command.RegisterTool(initGenkit); commandTool == nil {
 			return errors.New("failed to register interruptible runCommand tool")
 		}
 
 		for _, mw := range []ai.Middleware{
 			&middleware.Skills{SkillPaths: []string{skillsDir}},
-			&middleware.Retry{MaxRetries: 3},
 			&a2uix.Surfaces{
-				CatalogID:    CatalogID,
-				Instructions: a2uix.InstructionsNone,
-				Validate:     a2uix.ValidateStrict,
+				CatalogID: CatalogID,
+				Validate:  a2uix.ValidateStrict,
 			},
 		} {
 			if _, mwErr := mw.New(ctx); mwErr != nil {
@@ -353,10 +354,11 @@ func New(ctx context.Context, cfg Config) (*AIDA, error) {
 
 		sessionStore := localstore.NewInMemorySessionStore[any]()
 
+		// 3. Define the single AIDA agent from prompts/aida.prompt
 		initAgent = genkitx.DefinePromptAgent(
 			initGenkit,
 			AgentName,
-			aix.WithDescription[any]("AIDA - AI Diagnostic & Remediation Agent powered by osquery, OS skills, Google Search, HITL command execution, and A2UI v0.9 surfaces"),
+			aix.WithDescription[any]("AIDA — AI Diagnostic Agent"),
 			aix.WithSessionStore[any](sessionStore),
 			aix.WithNamedPrompt[any](PromptName, PromptInput{OS: osName}),
 		)

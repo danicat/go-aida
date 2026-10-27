@@ -24,7 +24,10 @@ import { AidaCatalogElement, aidaCatalogBaseStyles } from "./base.js";
 
 export const AidaActionButtonSchema = z.object({
   label: CommonSchemas.DynamicString,
-  variant: z.enum(["primary", "default", "danger"]).default("default").optional(),
+  variant: z
+    .enum(["primary", "warning", "danger", "default"])
+    .default("default")
+    .optional(),
   action: AidaFlexibleActionSchema.optional(),
   actionName: z.string().optional(),
   actionContext: z.record(z.string(), z.unknown()).optional(),
@@ -70,6 +73,10 @@ export class AidaActionButtonElement extends AidaCatalogElement<
 
       .action-btn.variant-primary {
         --btn-color: var(--aida-nominal, #00ff88);
+      }
+
+      .action-btn.variant-warning {
+        --btn-color: var(--aida-warning, #ffb000);
       }
 
       .action-btn.variant-danger {
